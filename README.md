@@ -13,6 +13,7 @@ The repository implements the first production-shaped vertical slice:
 - IDNA normalization, Unicode confusable checks, edit distance, suspicious-token detection, deterministic scoring, and explicit score contributions;
 - durable observations, candidates, incidents, evidence, connector checkpoints, audit events, and PostgreSQL jobs;
 - tenant-scoped incident APIs and an interactive analyst console;
+- API-backed incident evidence timelines, assignment, severity/status decisions, rationale capture, and audited triage;
 - RDAP enrichment jobs and a separately containerized page-capture utility with SSRF controls;
 - fail-soft A/AAAA/CNAME/MX/NS/TXT, RDAP, and TLS certificate enrichment with public-IP enforcement and deterministic rescoring;
 - Docker Compose, CI, unit tests, health checks, and operational documentation.

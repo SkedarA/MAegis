@@ -1,20 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-
-type Incident = {
-  id: string;
-  domain: string;
-  brand: string;
-  source: string;
-  score: number;
-  severity: "Critical" | "High" | "Medium" | "Low";
-  status: "New" | "Investigating" | "Monitoring";
-  age: string;
-  firstSeen: string;
-  signals: string[];
-  summary: string;
-};
+import { IncidentDetail } from "./incident-detail";
+import type { Incident } from "./incident-types";
 
 const seededIncidents: Incident[] = [
   {
@@ -23,10 +11,12 @@ const seededIncidents: Incident[] = [
     brand: "Acme Financial",
     source: "Certificate Transparency",
     score: 94,
+    confidence: 92,
     severity: "Critical",
     status: "New",
     age: "4m",
     firstSeen: "28 Jul 2026, 10:24 UTC",
+    assignedTo: null,
     signals: ["Brand + identity token", "Password form detected", "Domain age < 24h", "MX configured"],
     summary: "Newly certified domain combines the enrolled brand with an identity-verification lure and presents a credential form.",
   },
@@ -36,10 +26,12 @@ const seededIncidents: Incident[] = [
     brand: "Northstar Cloud",
     source: "CZDS zone delta",
     score: 86,
+    confidence: 88,
     severity: "High",
     status: "Investigating",
     age: "18m",
     firstSeen: "28 Jul 2026, 10:10 UTC",
+    assignedTo: "alex@maegis.local",
     signals: ["Brand + support token", "New registration", "Unrelated nameserver"],
     summary: "Lookalike support domain was observed in a new zone delta and resolves outside the company allowlist.",
   },
@@ -49,10 +41,12 @@ const seededIncidents: Incident[] = [
     brand: "Helio Commerce",
     source: "URLhaus",
     score: 81,
+    confidence: 91,
     severity: "High",
     status: "New",
     age: "36m",
     firstSeen: "28 Jul 2026, 09:52 UTC",
+    assignedTo: null,
     signals: ["Threat-feed hit", "Payment token", "Brand similarity 0.91"],
     summary: "Threat-feed URL uses a payment lure and has strong lexical similarity to the protected brand.",
   },
@@ -62,10 +56,12 @@ const seededIncidents: Incident[] = [
     brand: "Midori Health",
     source: "CT monitor",
     score: 76,
+    confidence: 78,
     severity: "Medium",
     status: "Monitoring",
     age: "1h",
     firstSeen: "28 Jul 2026, 09:16 UTC",
+    assignedTo: null,
     signals: ["Unicode confusable", "Mixed-script label", "Login token"],
     summary: "IDN label contains a confusable character and a login token, but no active page was captured.",
   },
@@ -75,10 +71,12 @@ const seededIncidents: Incident[] = [
     brand: "Acme Financial",
     source: "Generated candidate",
     score: 61,
+    confidence: 66,
     severity: "Medium",
     status: "Investigating",
     age: "2h",
     firstSeen: "28 Jul 2026, 08:37 UTC",
+    assignedTo: "alex@maegis.local",
     signals: ["Brand + careers token", "Recently certified", "No MX record"],
     summary: "Brand-token domain is active and newly certified; evidence is insufficient for confirmation.",
   },
@@ -133,7 +131,7 @@ export default function Home() {
         <nav aria-label="Primary navigation">
           <p className="nav-label">Monitor</p>
           <a className="nav-item active" href="#overview"><span>⌁</span>Overview</a>
-          <a className="nav-item" href="#incidents"><span>◇</span>Incidents <b>12</b></a>
+          <a className="nav-item" href="#incidents"><span>◇</span>Incidents <b>{incidents.length}</b></a>
           <a className="nav-item" href="#discovery"><span>◎</span>Discovery</a>
           <a className="nav-item" href="#brands"><span>◫</span>Protected brands</a>
           <p className="nav-label">Operate</p>
@@ -184,19 +182,7 @@ export default function Home() {
             </div>
           </article>
 
-          <aside className="panel evidence-panel" aria-live="polite">
-            {selected && <>
-              <div className="evidence-head"><div><span className={severityClass(selected.severity)}>{selected.severity}</span><span>{selected.id}</span></div><button aria-label="Close incident detail" onClick={() => setSelected(null)}>×</button></div>
-              <h2>{selected.domain}</h2><p className="muted">{selected.brand} · observed {selected.age} ago</p>
-              <div className="score-block"><div className="large-score">{selected.score}<span>/100</span></div><div><strong>Risk score</strong><span>Confidence 92%</span></div></div>
-              <p className="summary">{selected.summary}</p>
-              <h3>Evidence signals</h3>
-              <ul className="signal-list">{selected.signals.map((signal, index) => <li key={signal}><span>{index < 2 ? "!" : "+"}</span>{signal}</li>)}</ul>
-              <div className="fact-grid"><div><span>First seen</span><strong>{selected.firstSeen}</strong></div><div><span>Source</span><strong>{selected.source}</strong></div></div>
-              <div className="detail-actions"><button className="primary-button">Start investigation</button><button className="secondary-button">View evidence</button></div>
-            </>}
-            {!selected && <div className="empty-detail"><span>◇</span><h3>Select an incident</h3><p>Review its score, evidence, and investigation state.</p></div>}
-          </aside>
+          {selected ? <IncidentDetail key={selected.id} incident={selected} mode={dataMode} onClose={() => setSelected(null)} onUpdated={(updated) => { setSelected(updated); setIncidents((current) => current.map((item) => item.id === updated.id ? updated : item)); }} /> : <aside className="panel evidence-panel"><div className="empty-detail"><span>◇</span><h3>Select an incident</h3><p>Review its score, evidence, and investigation state.</p></div></aside>}
         </section>
 
         <section className="bottom-grid">
