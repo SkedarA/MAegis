@@ -31,3 +31,7 @@ def require_analyst(principal: Principal) -> None:
     if principal.role not in {"analyst", "manager", "administrator"}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Analyst role required")
 
+
+def require_administrator(principal: Principal) -> None:
+    if principal.role != "administrator":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator role required")

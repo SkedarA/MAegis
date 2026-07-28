@@ -4,7 +4,9 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
+from .brand_schedule import select_brand_batch
 from .connectors import CZDSZoneConnector, CertificateTransparencyConnector, DNSCandidateConnector, fetch_rdap
+from .config import get_settings
 from .database import SessionLocal
 from .detection import analyze_domain, generate_candidates, normalize_domain
 from .models import BackgroundJob, Candidate, EvidenceItem, Incident, ProtectedBrand, ScoreContribution, Severity, SourceConnector
@@ -34,8 +36,10 @@ def persist_finding(db, brand: ProtectedBrand, domain: str, source: str, raw_has
 
 
 async def poll_live_sources() -> None:
+    settings = get_settings()
     with SessionLocal() as db:
-        brands = db.scalars(select(ProtectedBrand).where(ProtectedBrand.monitoring_enabled.is_(True))).all()
+        enrolled = list(db.scalars(select(ProtectedBrand).where(ProtectedBrand.monitoring_enabled.is_(True)).order_by(ProtectedBrand.id)).all())
+        brands = select_brand_batch(enrolled, settings.discovery_brand_batch_size)
         for brand in brands:
             scheduled = [
                 (CertificateTransparencyConnector(), brand.canonical_name),
@@ -92,7 +96,7 @@ async def main() -> None:
         await poll_live_sources()
         for _ in range(50):
             await process_jobs()
-        await asyncio.sleep(60)
+        await asyncio.sleep(get_settings().discovery_poll_interval_seconds)
 
 
 if __name__ == "__main__":

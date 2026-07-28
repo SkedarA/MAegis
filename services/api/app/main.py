@@ -7,13 +7,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from .brand_catalog import get_catalog
+from .brand_enrollment import enroll_catalog
 from .config import get_settings
 from .database import Base, engine, get_db
 from .detection import analyze_domain, canonical_brand, normalize_domain
 from .models import AuditEvent, BackgroundJob, Candidate, Incident, IncidentStatus, ProtectedBrand, ScoreContribution, Severity, SourceConnector
-from .schemas import AIAnalysisView, BrandCreate, BrandView, IncidentView, SubmissionCreate, TriageUpdate
+from .schemas import AIAnalysisView, BrandCreate, BrandView, CatalogBrandView, CatalogEnrollmentCreate, CatalogEnrollmentView, IncidentView, SubmissionCreate, TriageUpdate
 from .scoring import score_signals
-from .security import Principal, require_analyst, require_principal
+from .security import Principal, require_administrator, require_analyst, require_principal
 
 
 @asynccontextmanager
@@ -67,6 +69,49 @@ def create_brand(payload: BrandCreate, db: Session = Depends(get_db), principal:
 @app.get("/api/v1/brands", response_model=list[BrandView])
 def list_brands(db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> list[ProtectedBrand]:
     return list(db.scalars(select(ProtectedBrand).where(ProtectedBrand.tenant_id == principal.tenant_id).order_by(ProtectedBrand.name)))
+
+
+@app.get("/api/v1/brand-catalog", response_model=list[CatalogBrandView])
+def list_brand_catalog(_: Principal = Depends(require_principal)) -> list[dict]:
+    return [
+        {
+            "key": item.key,
+            "name": item.name,
+            "sector": item.sector,
+            "official_domains": list(item.official_domains),
+            "trademarks": list(item.trademarks),
+            "permitted_variations": list(item.permitted_variations),
+            "keywords": list(item.keywords),
+        }
+        for item in get_catalog()
+    ]
+
+
+@app.post("/api/v1/brand-catalog/enroll", response_model=CatalogEnrollmentView)
+def enroll_brand_catalog(
+    payload: CatalogEnrollmentCreate,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require_principal),
+) -> dict:
+    require_administrator(principal)
+    try:
+        created, updated = enroll_catalog(
+            db,
+            principal.tenant_id,
+            payload.keys,
+            monitoring_enabled=payload.monitoring_enabled,
+            actor=principal.subject,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    db.commit()
+    brands = created + updated
+    return {
+        "created": len(created),
+        "updated": len(updated),
+        "monitoring_enabled": payload.monitoring_enabled,
+        "brand_ids": [brand.id for brand in brands],
+    }
 
 
 @app.post("/api/v1/submissions", response_model=IncidentView, status_code=status.HTTP_201_CREATED)

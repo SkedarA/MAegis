@@ -30,6 +30,36 @@ class BrandView(BaseModel):
     created_at: datetime
 
 
+class CatalogBrandView(BaseModel):
+    key: str
+    name: str
+    sector: str
+    official_domains: list[str]
+    trademarks: list[str]
+    permitted_variations: list[str]
+    keywords: list[str]
+
+
+class CatalogEnrollmentCreate(BaseModel):
+    keys: list[str] | None = None
+    monitoring_enabled: bool = True
+    legitimate_interest_confirmed: bool
+
+    @field_validator("legitimate_interest_confirmed")
+    @classmethod
+    def enrollment_interest_required(cls, value: bool) -> bool:
+        if not value:
+            raise ValueError("A legitimate defensive or research purpose must be confirmed")
+        return value
+
+
+class CatalogEnrollmentView(BaseModel):
+    created: int
+    updated: int
+    monitoring_enabled: bool
+    brand_ids: list[str]
+
+
 class SubmissionCreate(BaseModel):
     brand_id: str
     value: str = Field(min_length=3, max_length=2048)
@@ -78,4 +108,3 @@ class AIAnalysisView(BaseModel):
     recommended_actions: list[str]
     executive_summary: str
     evidence_pack_version: str = "1.0"
-
