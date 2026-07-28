@@ -15,6 +15,7 @@ export type Incident = {
   assignedTo: string | null;
   signals: string[];
   summary: string;
+  references?: Array<{ label: string; url: string }>;
 };
 
 export type EvidenceItem = {

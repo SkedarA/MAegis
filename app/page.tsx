@@ -6,79 +6,108 @@ import type { Incident } from "./incident-types";
 
 const seededIncidents: Incident[] = [
   {
-    id: "INC-2048",
-    domain: "acme-id-verify.com",
-    brand: "Acme Financial",
-    source: "Certificate Transparency",
-    score: 94,
-    confidence: 92,
+    id: "INC-R008",
+    domain: "bitdefender-download.com",
+    brand: "Bitdefender",
+    source: "DomainTools + WIPO",
+    score: 99,
+    confidence: 99,
     severity: "Critical",
-    status: "New",
-    age: "4m",
-    firstSeen: "28 Jul 2026, 10:24 UTC",
+    status: "Closed",
+    age: "Historical",
+    firstSeen: "2025-05-27T00:00:00Z",
     assignedTo: null,
-    signals: ["Brand + identity token", "Password form detected", "Domain age < 24h", "MX configured"],
-    summary: "Newly certified domain combines the enrolled brand with an identity-verification lure and presents a credential form.",
+    signals: ["Exact brand + download lure", "Spoofed antivirus download page", "VenomRAT delivery", "WIPO ordered transfer"],
+    summary: "DomainTools documented a fake Bitdefender download page delivering VenomRAT; WIPO later ordered the domain transferred. DNS was inactive when MAegis rechecked it on 28 July 2026.",
+    references: [
+      { label: "DomainTools investigation", url: "https://dti.domaintools.com/research/venomrat" },
+      { label: "WIPO D2025-2163", url: "https://www.wipo.int/amc/en/domains/decisions/pdf/2025/d2025-2163.pdf" },
+    ],
   },
   {
-    id: "INC-2047",
-    domain: "northstar-support.net",
-    brand: "Northstar Cloud",
-    source: "CZDS zone delta",
+    id: "INC-R007",
+    domain: "bitdefendercorp.com",
+    brand: "Bitdefender",
+    source: "WIPO D2025-4288",
+    score: 88,
+    confidence: 98,
+    severity: "High",
+    status: "Closed",
+    age: "Historical",
+    firstSeen: "2025-10-20T00:00:00Z",
+    assignedTo: null,
+    signals: ["Exact brand + corporate token", "No legitimate interest", "Bad-faith registration", "WIPO ordered transfer"],
+    summary: "A WIPO panel found the registration abusive and ordered transfer. DNS was inactive at the MAegis verification snapshot.",
+    references: [{ label: "WIPO D2025-4288", url: "https://www.wipo.int/amc/en/domains/search/text.jsp?case=D2025-4288" }],
+  },
+  {
+    id: "INC-R006",
+    domain: "bitdefender.shop",
+    brand: "Bitdefender",
+    source: "WIPO D2024-4793",
+    score: 74,
+    confidence: 97,
+    severity: "Medium",
+    status: "Closed",
+    age: "Historical",
+    firstSeen: "2024-11-20T00:00:00Z",
+    assignedTo: null,
+    signals: ["Exact trademark domain", "Commercial TLD", "WIPO ordered transfer", "Currently no A record"],
+    summary: "WIPO ordered the exact-match shopping domain transferred to Bitdefender. MAegis records it as resolved historical brand abuse, not a current malware endpoint.",
+    references: [{ label: "WIPO D2024-4793", url: "https://www.wipo.int/amc/en/domains/decisions/pdf/2024/d2024-4793.pdf" }],
+  },
+  {
+    id: "INC-R005",
+    domain: "centralbitdefender.org",
+    brand: "Bitdefender",
+    source: "WIPO D2020-1263",
     score: 86,
-    confidence: 88,
+    confidence: 98,
     severity: "High",
-    status: "Investigating",
-    age: "18m",
-    firstSeen: "28 Jul 2026, 10:10 UTC",
-    assignedTo: "alex@maegis.local",
-    signals: ["Brand + support token", "New registration", "Unrelated nameserver"],
-    summary: "Lookalike support domain was observed in a new zone delta and resolves outside the company allowlist.",
+    status: "Closed",
+    age: "Historical",
+    firstSeen: "2020-05-19T00:00:00Z",
+    assignedTo: null,
+    signals: ["Reversed product mark", "Support-themed impersonation", "WIPO ordered transfer", "Currently no A record"],
+    summary: "The domain combined the BITDEFENDER CENTRAL product mark in reverse order. WIPO ordered transfer and the domain is retained as a closed regression case.",
+    references: [{ label: "WIPO D2020-1263", url: "https://www.wipo.int/amc/en/domains/decisions/text/2020/d2020-1263.html" }],
   },
   {
-    id: "INC-2046",
-    domain: "pay-helio.co",
-    brand: "Helio Commerce",
-    source: "URLhaus",
-    score: 81,
-    confidence: 91,
+    id: "INC-R004",
+    domain: "antivirusbitdefender.com",
+    brand: "Bitdefender",
+    source: "WIPO D2021-2530",
+    score: 84,
+    confidence: 98,
     severity: "High",
-    status: "New",
-    age: "36m",
-    firstSeen: "28 Jul 2026, 09:52 UTC",
+    status: "Closed",
+    age: "Historical",
+    firstSeen: "2021-08-04T00:00:00Z",
     assignedTo: null,
-    signals: ["Threat-feed hit", "Payment token", "Brand similarity 0.91"],
-    summary: "Threat-feed URL uses a payment lure and has strong lexical similarity to the protected brand.",
+    signals: ["Product + exact brand", "Confusing commercial intent", "WIPO case record", "Currently no A record"],
+    summary: "A resolved WIPO dispute involving a product-keyword combination around the Bitdefender mark; retained for detector and score regression testing.",
+    references: [{ label: "WIPO D2021-2530", url: "https://www.wipo.int/amc/en/domains/decisions/text/2021/d2021-2530.html" }],
   },
   {
-    id: "INC-2045",
-    domain: "mıdori-login.com",
-    brand: "Midori Health",
-    source: "CT monitor",
-    score: 76,
-    confidence: 78,
-    severity: "Medium",
-    status: "Monitoring",
-    age: "1h",
-    firstSeen: "28 Jul 2026, 09:16 UTC",
-    assignedTo: null,
-    signals: ["Unicode confusable", "Mixed-script label", "Login token"],
-    summary: "IDN label contains a confusable character and a login token, but no active page was captured.",
+    id: "INC-R003", domain: "emag-bg.com", brand: "eMAG", source: "WIPO D2017-0207", score: 89, confidence: 99,
+    severity: "High", status: "Closed", age: "Historical", firstSeen: "2017-02-02T00:00:00Z", assignedTo: null,
+    signals: ["Exact brand + market token", "Competing retail storefront", "Consumer-confusion risk", "WIPO ordered transfer"],
+    summary: "The domain resolved to a Bulgarian online retail platform using the eMAG mark. WIPO ordered transfer; it now resolves to loopback and is treated as remediated.",
+    references: [{ label: "WIPO D2017-0207", url: "https://www.wipo.int/amc/en/domains/decisions/text/2017/d2017-0207.html" }],
   },
   {
-    id: "INC-2044",
-    domain: "acme-careers.org",
-    brand: "Acme Financial",
-    source: "Generated candidate",
-    score: 61,
-    confidence: 66,
-    severity: "Medium",
-    status: "Investigating",
-    age: "2h",
-    firstSeen: "28 Jul 2026, 08:37 UTC",
-    assignedTo: "alex@maegis.local",
-    signals: ["Brand + careers token", "Recently certified", "No MX record"],
-    summary: "Brand-token domain is active and newly certified; evidence is insufficient for confirmation.",
+    id: "INC-R002", domain: "emagbg.com", brand: "eMAG", source: "WIPO D2017-0207", score: 87, confidence: 99,
+    severity: "High", status: "Closed", age: "Historical", firstSeen: "2017-02-02T00:00:00Z", assignedTo: null,
+    signals: ["Exact brand + market token", "Competing retail storefront", "Consumer-confusion risk", "WIPO ordered transfer"],
+    summary: "A companion domain in the same eMAG dispute. It was ordered transferred and currently resolves to loopback rather than an operational storefront.",
+    references: [{ label: "WIPO D2017-0207", url: "https://www.wipo.int/amc/en/domains/decisions/text/2017/d2017-0207.html" }],
+  },
+  {
+    id: "INC-R001", domain: "uipath.ai", brand: "UiPath", source: "WIPO DAI2019-0005", score: 72, confidence: 99,
+    severity: "Medium", status: "Closed", age: "Historical", firstSeen: "2019-12-04T00:00:00Z", assignedTo: null,
+    signals: ["Exact trademark domain", "AI-sector TLD", "Passive holding in bad faith", "WIPO ordered transfer"],
+    summary: "WIPO found the exact-match .ai registration abusive and ordered transfer. The domain now resolves and may be legitimate after transfer, so it is explicitly closed.",
+    references: [{ label: "WIPO DAI2019-0005", url: "https://www.wipo.int/amc/en/domains/decisions/text/2019/dai2019-0005.html" }],
   },
 ];
 
@@ -155,19 +184,19 @@ export default function Home() {
           </div>
         </header>
 
-        <div className="operational-banner"><span className="pulse-dot" /><strong>{dataMode === "live" ? "Live monitoring" : "Read-only demonstration"}</strong><span>{dataMode === "live" ? "Connected to the private MAegis API" : "Seeded findings — configure MAEGIS_API_URL for live data"}</span><span className="banner-rule" /><span>Coverage window</span><strong>24/7</strong></div>
+        <div className="operational-banner"><span className="pulse-dot" /><strong>{dataMode === "live" ? "Live monitoring" : "Research-backed demonstration"}</strong><span>{dataMode === "live" ? "Connected to the private MAegis API" : "Public-source historical cases — not a live threat feed"}</span><span className="banner-rule" /><span>Evidence policy</span><strong>Source linked</strong></div>
 
         <section className="metrics-grid" aria-label="Key risk metrics">
-          <article className="metric-card"><div><span>Open incidents</span><b className="trend up">↑ 18%</b></div><strong>47</strong><p>12 require analyst action</p><div className="mini-bars">{[30,42,34,55,49,72,64,83,78,92].map((height, index) => <i key={index} style={{height: `${height}%`}} />)}</div></article>
-          <article className="metric-card"><div><span>Critical exposure</span><b className="trend alert">3 new</b></div><strong>08</strong><p>Across 5 protected brands</p><div className="risk-ring"><span>83</span></div></article>
-          <article className="metric-card"><div><span>Domains analyzed</span><b className="trend">Today</b></div><strong>18.4k</strong><p>0.26% promoted to incidents</p><div className="source-stack"><i /><i /><i /><i /></div></article>
-          <article className="metric-card"><div><span>Median time to alert</span><b className="trend good">↓ 11%</b></div><strong>2m 14s</strong><p>Target is under 5 minutes</p><div className="sparkline"><i /><i /><i /><i /><i /><i /><i /></div></article>
+          <article className="metric-card"><div><span>Verified cases</span><b className="trend">Public demo</b></div><strong>{incidents.length}</strong><p>Every case links to public evidence</p><div className="mini-bars">{[52,64,58,73,67,85,78,92].map((height, index) => <i key={index} style={{height: `${height}%`}} />)}</div></article>
+          <article className="metric-card"><div><span>Malware delivery</span><b className="trend alert">Confirmed</b></div><strong>01</strong><p>DomainTools technical analysis</p><div className="risk-ring"><span>99</span></div></article>
+          <article className="metric-card"><div><span>Brands represented</span><b className="trend">Archive</b></div><strong>03</strong><p>Bitdefender, eMAG, and UiPath</p><div className="source-stack"><i /><i /><i /><i /></div></article>
+          <article className="metric-card"><div><span>Current open cases</span><b className="trend good">Accurate</b></div><strong>00</strong><p>Historical cases are marked closed</p><div className="sparkline"><i /><i /><i /><i /><i /><i /><i /></div></article>
         </section>
 
         <section className="content-grid">
           <article className="panel incidents-panel" id="incidents">
-            <div className="panel-heading"><div><p className="eyebrow">Priority queue</p><h2>Incidents requiring attention</h2></div><button className="text-button">View all 47 →</button></div>
-            <div className="filters" role="group" aria-label="Filter incidents">{["All", "Critical", "New", "Investigating"].map((item) => <button key={item} className={filter === item ? "selected" : ""} onClick={() => setFilter(item)}>{item}{item === "All" && <span>{incidents.length}</span>}</button>)}</div>
+            <div className="panel-heading"><div><p className="eyebrow">Evidence-backed archive</p><h2>Real brand-abuse cases</h2></div><span className="text-button">Public sources only</span></div>
+            <div className="filters" role="group" aria-label="Filter incidents">{["All", "Critical", "High", "Closed"].map((item) => <button key={item} className={filter === item ? "selected" : ""} onClick={() => setFilter(item)}>{item}{item === "All" && <span>{incidents.length}</span>}</button>)}</div>
             <div className="table-wrap">
               <table>
                 <thead><tr><th>Finding</th><th>Risk</th><th>Status</th><th>First seen</th></tr></thead>
@@ -187,16 +216,15 @@ export default function Home() {
 
         <section className="bottom-grid">
           <article className="panel" id="sources"><div className="panel-heading"><div><p className="eyebrow">Ingestion</p><h2>Source health</h2></div><span className="all-healthy">● All operational</span></div><div className="source-list">{sources.map((source) => <div key={source.name}><span className="source-icon">{source.name[0]}</span><div><strong>{source.name}</strong><span>{source.seen} observations today</span></div><div className="source-state"><strong>{source.state}</strong><span>Lag {source.lag}</span></div></div>)}</div></article>
-          <article className="panel coverage-panel" id="brands"><div className="panel-heading"><div><p className="eyebrow">Portfolio</p><h2>Brand exposure</h2></div><button className="text-button">Manage brands →</button></div><div className="coverage-list">
-            <div><span className="company-mark amber">AC</span><div><strong>Acme Financial</strong><span>18 open incidents</span></div><em>94</em></div>
-            <div><span className="company-mark sage">NC</span><div><strong>Northstar Cloud</strong><span>11 open incidents</span></div><em>86</em></div>
-            <div><span className="company-mark coral">HC</span><div><strong>Helio Commerce</strong><span>9 open incidents</span></div><em>81</em></div>
-            <div><span className="company-mark stone">MH</span><div><strong>Midori Health</strong><span>5 open incidents</span></div><em>76</em></div>
+          <article className="panel coverage-panel" id="brands"><div className="panel-heading"><div><p className="eyebrow">Research portfolio</p><h2>Brand case coverage</h2></div><span className="text-button">Historical baseline</span></div><div className="coverage-list">
+            <div><span className="company-mark amber">BD</span><div><strong>Bitdefender</strong><span>5 verified cases</span></div><em>99</em></div>
+            <div><span className="company-mark sage">EM</span><div><strong>eMAG</strong><span>2 verified cases</span></div><em>89</em></div>
+            <div><span className="company-mark coral">UI</span><div><strong>UiPath</strong><span>1 verified case</span></div><em>72</em></div>
           </div></article>
         </section>
       </section>
 
-      {showSubmission && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowSubmission(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="submission-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setShowSubmission(false)} aria-label="Close">×</button><p className="eyebrow">Manual submission</p><h2 id="submission-title">Analyze a domain or URL</h2><p>Submit an observation to the same evidence and scoring pipeline used by live connectors.</p><label>Domain or URL<input autoFocus placeholder="example-login.com" /></label><label>Protected brand<select defaultValue="acme"><option value="acme">Acme Financial</option><option value="northstar">Northstar Cloud</option><option value="helio">Helio Commerce</option><option value="midori">Midori Health</option></select></label><label className="check"><input type="checkbox" defaultChecked /> Request isolated page capture</label><button className="primary-button full" onClick={() => setShowSubmission(false)}>Queue analysis</button><small>Live capture never enters credentials or submits forms.</small></section></div>}
+      {showSubmission && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowSubmission(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="submission-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setShowSubmission(false)} aria-label="Close">×</button><p className="eyebrow">Manual submission</p><h2 id="submission-title">Analyze a domain or URL</h2><p>Submit an observation to the same evidence and scoring pipeline used by live connectors.</p><label>Domain or URL<input autoFocus placeholder="example-login.com" /></label><label>Protected brand<select defaultValue="bitdefender"><option value="bitdefender">Bitdefender</option><option value="emag">eMAG</option><option value="uipath">UiPath</option><option value="fan-courier">FAN Courier</option></select></label><label className="check"><input type="checkbox" defaultChecked /> Request isolated page capture</label><button className="primary-button full" onClick={() => setShowSubmission(false)}>Queue analysis</button><small>Live capture never enters credentials or submits forms.</small></section></div>}
     </main>
   );
 }

@@ -14,7 +14,9 @@ test("renders the operational analyst console", async () => {
   const html = await response.text();
   assert.match(html, /MAegis/i);
   assert.match(html, /Brand risk command/i);
-  assert.match(html, /Incidents requiring attention/i);
+  assert.match(html, /Real brand-abuse cases/i);
+  assert.match(html, /bitdefender-download\.com/i);
+  assert.match(html, /Public-source historical cases/i);
   assert.match(html, /Certificate Transparency/i);
   assert.match(html, /Evidence timeline/i);
   assert.match(html, /Decision rationale/i);
