@@ -12,8 +12,8 @@ from .brand_enrollment import enroll_catalog
 from .config import get_settings
 from .database import Base, engine, get_db
 from .detection import analyze_domain, canonical_brand, normalize_domain
-from .models import AuditEvent, BackgroundJob, Candidate, Incident, IncidentStatus, ProtectedBrand, ScoreContribution, Severity, SourceConnector
-from .schemas import AIAnalysisView, BrandCreate, BrandView, CatalogBrandView, CatalogEnrollmentCreate, CatalogEnrollmentView, IncidentView, SubmissionCreate, TriageUpdate
+from .models import AuditEvent, BackgroundJob, Candidate, EvidenceItem, Incident, IncidentStatus, ProtectedBrand, ScoreContribution, Severity, SourceConnector
+from .schemas import AIAnalysisView, BrandCreate, BrandView, CatalogBrandView, CatalogEnrollmentCreate, CatalogEnrollmentView, EvidenceView, IncidentView, SubmissionCreate, TriageUpdate
 from .scoring import score_signals
 from .security import Principal, require_administrator, require_analyst, require_principal
 
@@ -178,6 +178,26 @@ def get_incident(incident_id: str, db: Session = Depends(get_db), principal: Pri
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
     return incident
+
+
+@app.get("/api/v1/incidents/{incident_id}/evidence", response_model=list[EvidenceView])
+def list_incident_evidence(
+    incident_id: str,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require_principal),
+) -> list[EvidenceItem]:
+    incident_exists = db.scalar(
+        select(Incident.id).where(Incident.id == incident_id, Incident.tenant_id == principal.tenant_id)
+    )
+    if not incident_exists:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return list(
+        db.scalars(
+            select(EvidenceItem)
+            .where(EvidenceItem.incident_id == incident_id, EvidenceItem.tenant_id == principal.tenant_id)
+            .order_by(EvidenceItem.collected_at, EvidenceItem.id)
+        )
+    )
 
 
 @app.post("/api/v1/incidents/{incident_id}/triage", response_model=IncidentView)

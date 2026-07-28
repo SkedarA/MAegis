@@ -14,6 +14,7 @@ The repository implements the first production-shaped vertical slice:
 - durable observations, candidates, incidents, evidence, connector checkpoints, audit events, and PostgreSQL jobs;
 - tenant-scoped incident APIs and an interactive analyst console;
 - RDAP enrichment jobs and a separately containerized page-capture utility with SSRF controls;
+- fail-soft A/AAAA/CNAME/MX/NS/TXT, RDAP, and TLS certificate enrichment with public-IP enforcement and deterministic rescoring;
 - Docker Compose, CI, unit tests, health checks, and operational documentation.
 
 Live connectors are intentionally best effort. CZDS files require approved access, URLhaus requires an auth key, and the included CT search adapter should be replaced by a dedicated checkpointed CT monitor as volume grows.
@@ -88,6 +89,8 @@ curl -X POST http://localhost:8000/api/v1/submissions \
 ```
 
 The response contains the normalized domain, risk, confidence, severity, detector version, and every score contribution.
+
+The enrichment worker stores each DNS, RDAP, and TLS result independently. Retrieve the evidence timeline with `GET /api/v1/incidents/{id}/evidence`. DNS records pointing to non-public space remain visible as evidence, but MAegis will not establish a TLS connection to those addresses.
 
 ## Safety defaults
 
