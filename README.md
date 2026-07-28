@@ -17,6 +17,7 @@ The repository implements the first production-shaped vertical slice:
 - RDAP enrichment jobs and a separately containerized page-capture utility with SSRF controls;
 - fail-soft A/AAAA/CNAME/MX/NS/TXT, RDAP, and TLS certificate enrichment with public-IP enforcement and deterministic rescoring;
 - Docker Compose, CI, unit tests, health checks, and operational documentation.
+- a hardened small-VM deployment profile with automatic TLS, internal-only PostgreSQL, resource limits, restart policies, durable worker heartbeats, and verified database backups.
 
 Generated lookalikes cover alternate TLDs, omissions, duplications, transpositions, keyboard substitutions and insertions, hyphenation, and brand-keyword combinations. Per-brand cursors ensure the bounded pool is fully rotated instead of repeatedly scanning the same prefix. RDAP checks can identify a registration before DNS or web content appears.
 
@@ -94,6 +95,8 @@ curl -X POST http://localhost:8000/api/v1/submissions \
 The response contains the normalized domain, risk, confidence, severity, detector version, and every score contribution.
 
 The enrichment worker stores each DNS, RDAP, and TLS result independently. Retrieve the evidence timeline with `GET /api/v1/incidents/{id}/evidence`. DNS records pointing to non-public space remain visible as evidence, but MAegis will not establish a TLS connection to those addresses.
+
+For an operational deployment, use `deploy/compose.production.yml` and follow [the operations runbook](docs/operations.md). The analyst console only displays a live-scanner state after the authenticated worker heartbeat proves a recent completed or running discovery cycle.
 
 ## Safety defaults
 

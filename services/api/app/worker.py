@@ -1,6 +1,8 @@
 import asyncio
 import hashlib
 import json
+import os
+import socket
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -9,11 +11,45 @@ from .brand_schedule import select_brand_batch
 from .candidate_schedule import brand_checkpoint, rotating_batch, with_brand_checkpoint
 from .connectors import CZDSZoneConnector, CertificateTransparencyConnector, DNSCandidateConnector, RDAPRegistrationConnector, URLScanConnector, fetch_rdap
 from .config import get_settings
-from .database import SessionLocal
+from .database import Base, SessionLocal, engine
 from .detection import DETECTOR_VERSION, GeneratedCandidate, Signal, analyze_domain, generate_candidate_variants, is_official_domain, normalize_domain
 from .enrichment import enrichment_signals, fetch_dns, fetch_tls
-from .models import BackgroundJob, Candidate, EvidenceItem, Incident, Observation, ProtectedBrand, ScoreContribution, Severity, SourceConnector
+from .models import BackgroundJob, Candidate, EvidenceItem, Incident, Observation, ProtectedBrand, ScoreContribution, Severity, SourceConnector, WorkerHeartbeat
 from .scoring import score_signals
+
+
+WORKER_NAME = "discovery"
+
+
+def update_worker_heartbeat(
+    instance_id: str,
+    status: str,
+    *,
+    cycle_started_at: datetime | None = None,
+    cycle_completed_at: datetime | None = None,
+    cycle_count: int | None = None,
+    last_error: str | None = None,
+    details: dict | None = None,
+) -> None:
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        heartbeat = db.get(WorkerHeartbeat, WORKER_NAME)
+        if heartbeat is None:
+            heartbeat = WorkerHeartbeat(worker_name=WORKER_NAME, instance_id=instance_id, started_at=now)
+            db.add(heartbeat)
+        heartbeat.instance_id = instance_id
+        heartbeat.status = status
+        heartbeat.last_seen_at = now
+        if cycle_started_at is not None:
+            heartbeat.last_cycle_started_at = cycle_started_at
+        if cycle_completed_at is not None:
+            heartbeat.last_cycle_completed_at = cycle_completed_at
+        if cycle_count is not None:
+            heartbeat.cycle_count = cycle_count
+        heartbeat.last_error = last_error
+        if details is not None:
+            heartbeat.details = details
+        db.commit()
 
 
 def get_connector_state(db, brand: ProtectedBrand, connector) -> SourceConnector:
@@ -286,11 +322,42 @@ async def enrich_incident(db, job: BackgroundJob) -> None:
 
 
 async def main() -> None:
+    Base.metadata.create_all(bind=engine)
+    settings = get_settings()
+    instance_id = os.getenv("HOSTNAME") or socket.gethostname()
+    cycle_count = 0
+    update_worker_heartbeat(instance_id, "starting", cycle_count=cycle_count)
     while True:
-        await poll_live_sources()
-        for _ in range(50):
-            await process_jobs()
-        await asyncio.sleep(get_settings().discovery_poll_interval_seconds)
+        cycle_started_at = datetime.now(timezone.utc)
+        update_worker_heartbeat(
+            instance_id,
+            "running",
+            cycle_started_at=cycle_started_at,
+            cycle_count=cycle_count,
+            details={"brand_batch_size": settings.discovery_brand_batch_size},
+        )
+        try:
+            await poll_live_sources()
+            for _ in range(50):
+                await process_jobs()
+        except Exception as exc:
+            update_worker_heartbeat(
+                instance_id,
+                "degraded",
+                cycle_count=cycle_count,
+                last_error=f"{type(exc).__name__}: {exc}"[:1000],
+            )
+            await asyncio.sleep(min(60, settings.discovery_poll_interval_seconds))
+            continue
+        cycle_count += 1
+        update_worker_heartbeat(
+            instance_id,
+            "healthy",
+            cycle_completed_at=datetime.now(timezone.utc),
+            cycle_count=cycle_count,
+            details={"brand_batch_size": settings.discovery_brand_batch_size},
+        )
+        await asyncio.sleep(settings.discovery_poll_interval_seconds)
 
 
 if __name__ == "__main__":

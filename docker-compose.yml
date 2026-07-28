@@ -23,6 +23,8 @@ services:
       MAEGIS_URLHAUS_AUTH_KEY: ${MAEGIS_URLHAUS_AUTH_KEY:-}
       MAEGIS_CZDS_DIRECTORY: /data/czds
       MAEGIS_DISCOVERY_BRAND_BATCH_SIZE: ${MAEGIS_DISCOVERY_BRAND_BATCH_SIZE:-5}
+      MAEGIS_DISCOVERY_DNS_BATCH_SIZE: ${MAEGIS_DISCOVERY_DNS_BATCH_SIZE:-40}
+      MAEGIS_DISCOVERY_RDAP_BATCH_SIZE: ${MAEGIS_DISCOVERY_RDAP_BATCH_SIZE:-10}
       MAEGIS_DISCOVERY_POLL_INTERVAL_SECONDS: ${MAEGIS_DISCOVERY_POLL_INTERVAL_SECONDS:-900}
     volumes:
       - ./data/czds:/data/czds:ro
@@ -38,12 +40,21 @@ services:
       MAEGIS_URLHAUS_AUTH_KEY: ${MAEGIS_URLHAUS_AUTH_KEY:-}
       MAEGIS_CZDS_DIRECTORY: /data/czds
       MAEGIS_DISCOVERY_BRAND_BATCH_SIZE: ${MAEGIS_DISCOVERY_BRAND_BATCH_SIZE:-5}
+      MAEGIS_DISCOVERY_DNS_BATCH_SIZE: ${MAEGIS_DISCOVERY_DNS_BATCH_SIZE:-40}
+      MAEGIS_DISCOVERY_RDAP_BATCH_SIZE: ${MAEGIS_DISCOVERY_RDAP_BATCH_SIZE:-10}
       MAEGIS_DISCOVERY_POLL_INTERVAL_SECONDS: ${MAEGIS_DISCOVERY_POLL_INTERVAL_SECONDS:-900}
+      MAEGIS_WORKER_HEALTH_STALE_SECONDS: ${MAEGIS_WORKER_HEALTH_STALE_SECONDS:-2400}
     volumes:
       - ./data/czds:/data/czds:ro
     depends_on:
       postgres: { condition: service_healthy }
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.worker_healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 10m
 
   web:
     build:

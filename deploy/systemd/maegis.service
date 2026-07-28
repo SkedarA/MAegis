@@ -1,0 +1,18 @@
+[Unit]
+Description=MAegis operational brand-abuse monitoring
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/maegis
+ExecStart=/usr/bin/docker compose --env-file .env.production -f deploy/compose.production.yml up -d --build --remove-orphans
+ExecReload=/usr/bin/docker compose --env-file .env.production -f deploy/compose.production.yml up -d --build --remove-orphans
+ExecStop=/usr/bin/docker compose --env-file .env.production -f deploy/compose.production.yml down
+TimeoutStartSec=900
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

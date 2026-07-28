@@ -33,6 +33,12 @@ test("evidence route has a safe unconfigured fallback", async () => {
   assert.deepEqual(await response.json(), { mode: "demo", evidence: [] });
 });
 
+test("runtime route fails closed when the private worker is unconfigured", async () => {
+  const response = await request("/api/runtime");
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { mode: "demo", worker: null });
+});
+
 test("triage route refuses mutations without a private API", async () => {
   const response = await request("/api/incidents/demo/triage", {
     method: "POST",

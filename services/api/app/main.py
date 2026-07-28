@@ -12,7 +12,8 @@ from .brand_enrollment import enroll_catalog
 from .config import get_settings
 from .database import Base, engine, get_db
 from .detection import analyze_domain, canonical_brand, normalize_domain
-from .models import AuditEvent, BackgroundJob, Candidate, EvidenceItem, Incident, IncidentStatus, ProtectedBrand, ScoreContribution, Severity, SourceConnector
+from .models import AuditEvent, BackgroundJob, Candidate, EvidenceItem, Incident, IncidentStatus, ProtectedBrand, ScoreContribution, Severity, SourceConnector, WorkerHeartbeat
+from .runtime_health import worker_is_fresh
 from .schemas import AIAnalysisView, BrandCreate, BrandView, CatalogBrandView, CatalogEnrollmentCreate, CatalogEnrollmentView, EvidenceView, IncidentView, SubmissionCreate, TriageUpdate
 from .scoring import score_signals
 from .security import Principal, require_administrator, require_analyst, require_principal
@@ -24,13 +25,17 @@ async def lifespan(_: FastAPI):
     yield
 
 
+settings = get_settings()
 app = FastAPI(
     title="MAegis Operational API",
     version="0.1.0",
     description="Live brand-abuse discovery, scoring, evidence, and analyst triage.",
     lifespan=lifespan,
+    docs_url=None if settings.environment == "production" else "/docs",
+    redoc_url=None if settings.environment == "production" else "/redoc",
 )
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+cors_origins = [item.strip() for item in settings.cors_origins.split(",") if item.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 
 def audit(db: Session, principal: Principal, action: str, resource_type: str, resource_id: str, payload: dict | None = None) -> None:
@@ -40,6 +45,30 @@ def audit(db: Session, principal: Principal, action: str, resource_type: str, re
 @app.get("/api/v1/health")
 def health() -> dict:
     return {"status": "ok", "service": "maegis-api", "capture_enabled": get_settings().capture_enabled}
+
+
+def worker_runtime(db: Session) -> dict:
+    heartbeat = db.get(WorkerHeartbeat, "discovery")
+    if heartbeat is None:
+        return {"configured": False, "fresh": False, "status": "missing"}
+    fresh = worker_is_fresh(heartbeat.last_seen_at, settings.worker_health_stale_seconds)
+    return {
+        "configured": True,
+        "fresh": fresh,
+        "status": heartbeat.status if fresh else "stale",
+        "instance_id": heartbeat.instance_id,
+        "cycle_count": heartbeat.cycle_count,
+        "last_seen_at": heartbeat.last_seen_at,
+        "last_cycle_started_at": heartbeat.last_cycle_started_at,
+        "last_cycle_completed_at": heartbeat.last_cycle_completed_at,
+        "last_error": heartbeat.last_error,
+        "details": heartbeat.details,
+    }
+
+
+@app.get("/api/v1/runtime/worker")
+def get_worker_runtime(db: Session = Depends(get_db), _: Principal = Depends(require_principal)) -> dict:
+    return worker_runtime(db)
 
 
 @app.post("/api/v1/brands", response_model=BrandView, status_code=status.HTTP_201_CREATED)
@@ -262,4 +291,4 @@ def list_connectors(db: Session = Depends(get_db), principal: Principal = Depend
 @app.get("/api/v1/metrics")
 def metrics(db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> dict:
     rows = db.execute(select(Incident.severity, func.count(Incident.id)).where(Incident.tenant_id == principal.tenant_id).group_by(Incident.severity)).all()
-    return {"open_incidents": db.scalar(select(func.count(Incident.id)).where(Incident.tenant_id == principal.tenant_id, Incident.status.not_in([IncidentStatus.CLOSED, IncidentStatus.FALSE_POSITIVE]))) or 0, "by_severity": {severity.value: count for severity, count in rows}}
+    return {"open_incidents": db.scalar(select(func.count(Incident.id)).where(Incident.tenant_id == principal.tenant_id, Incident.status.not_in([IncidentStatus.CLOSED, IncidentStatus.FALSE_POSITIVE]))) or 0, "by_severity": {severity.value: count for severity, count in rows}, "worker": worker_runtime(db)}

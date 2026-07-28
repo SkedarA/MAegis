@@ -155,6 +155,14 @@ const sources = [
   { name: "CZDS zone delta", state: "Scheduled", lag: "3h", seen: "438k" },
 ];
 
+type WorkerRuntime = {
+  configured: boolean;
+  fresh: boolean;
+  status: string;
+  cycle_count?: number;
+  last_cycle_completed_at?: string | null;
+};
+
 function severityClass(severity: Incident["severity"]) {
   return `severity severity-${severity.toLowerCase()}`;
 }
@@ -162,6 +170,7 @@ function severityClass(severity: Incident["severity"]) {
 export default function Home() {
   const [incidents, setIncidents] = useState<Incident[]>(seededIncidents);
   const [dataMode, setDataMode] = useState<"demo" | "live">("demo");
+  const [worker, setWorker] = useState<WorkerRuntime | null>(null);
   const [filter, setFilter] = useState("All");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Incident | null>(seededIncidents[0]);
@@ -187,6 +196,12 @@ export default function Home() {
         }
       })
       .catch(() => undefined);
+    fetch("/api/runtime", { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("Runtime unavailable")))
+      .then((payload: { mode: "demo" | "live"; worker: WorkerRuntime | null }) => {
+        if (payload.mode === "live") setWorker(payload.worker);
+      })
+      .catch(() => undefined);
     return () => controller.abort();
   }, []);
 
@@ -207,7 +222,7 @@ export default function Home() {
         </nav>
         <div className="sidebar-status">
           <div className="pulse-dot" />
-          <div><strong>Monitoring active</strong><span>6 sources connected</span></div>
+          <div><strong>{worker?.fresh ? "Monitoring active" : "Demonstration mode"}</strong><span>{worker?.fresh ? `Discovery cycle ${worker.cycle_count ?? 0}` : "Worker not connected"}</span></div>
         </div>
         <div className="profile"><span className="avatar">AM</span><div><strong>Alex Morgan</strong><span>Senior analyst</span></div><button aria-label="Profile options">•••</button></div>
       </aside>
@@ -221,7 +236,7 @@ export default function Home() {
           </div>
         </header>
 
-        <div className="operational-banner"><span className="pulse-dot" /><strong>{dataMode === "live" ? "Live monitoring" : "Research-backed demonstration"}</strong><span>{dataMode === "live" ? "Connected to the private MAegis API" : "Public-source current and historical cases — analyst review required"}</span><span className="banner-rule" /><span>Evidence policy</span><strong>Source linked</strong></div>
+        <div className="operational-banner"><span className="pulse-dot" /><strong>{worker?.fresh ? "Live discovery worker" : dataMode === "live" ? "API connected — worker unavailable" : "Research-backed demonstration"}</strong><span>{worker?.fresh ? `Healthy · ${worker.cycle_count ?? 0} completed cycles` : dataMode === "live" ? "Incidents remain available while scanner health is investigated" : "Public-source current and historical cases — analyst review required"}</span><span className="banner-rule" /><span>Evidence policy</span><strong>Source linked</strong></div>
 
         <section className="metrics-grid" aria-label="Key risk metrics">
           <article className="metric-card"><div><span>Verified cases</span><b className="trend">Public demo</b></div><strong>{incidents.length}</strong><p>Every case links to public evidence</p><div className="mini-bars">{[52,64,58,73,67,85,78,92].map((height, index) => <i key={index} style={{height: `${height}%`}} />)}</div></article>

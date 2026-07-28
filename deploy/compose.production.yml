@@ -1,0 +1,114 @@
+name: maegis
+
+x-maegis-environment: &maegis-environment
+  MAEGIS_ENVIRONMENT: production
+  MAEGIS_DATABASE_URL: ${MAEGIS_DATABASE_URL}
+  MAEGIS_API_KEY: ${MAEGIS_API_KEY}
+  MAEGIS_CAPTURE_ENABLED: ${MAEGIS_CAPTURE_ENABLED:-false}
+  MAEGIS_MAX_GENERATED_CANDIDATES: ${MAEGIS_MAX_GENERATED_CANDIDATES:-250}
+  MAEGIS_DISCOVERY_BRAND_BATCH_SIZE: ${MAEGIS_DISCOVERY_BRAND_BATCH_SIZE:-5}
+  MAEGIS_DISCOVERY_DNS_BATCH_SIZE: ${MAEGIS_DISCOVERY_DNS_BATCH_SIZE:-40}
+  MAEGIS_DISCOVERY_RDAP_BATCH_SIZE: ${MAEGIS_DISCOVERY_RDAP_BATCH_SIZE:-10}
+  MAEGIS_DISCOVERY_POLL_INTERVAL_SECONDS: ${MAEGIS_DISCOVERY_POLL_INTERVAL_SECONDS:-900}
+  MAEGIS_WORKER_HEALTH_STALE_SECONDS: ${MAEGIS_WORKER_HEALTH_STALE_SECONDS:-2400}
+  MAEGIS_CT_SEARCH_URL: ${MAEGIS_CT_SEARCH_URL:-https://crt.sh/}
+  MAEGIS_RDAP_BASE_URL: ${MAEGIS_RDAP_BASE_URL:-https://rdap.org/domain/}
+  MAEGIS_URLHAUS_AUTH_KEY: ${MAEGIS_URLHAUS_AUTH_KEY:-}
+  MAEGIS_CZDS_DIRECTORY: /data/czds
+  MAEGIS_CORS_ORIGINS: ${MAEGIS_CORS_ORIGINS}
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks: [backend]
+    logging: &bounded-logs
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  api:
+    build: ../services/api
+    environment: *maegis-environment
+    volumes:
+      - ../data/czds:/data/czds:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+    expose: ["8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    read_only: true
+    tmpfs: ["/tmp:size=64m,noexec,nosuid"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+    restart: unless-stopped
+    networks: [backend]
+    logging: *bounded-logs
+
+  discovery-worker:
+    build: ../services/api
+    command: ["python", "-m", "app.worker"]
+    environment: *maegis-environment
+    volumes:
+      - ../data/czds:/data/czds:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.worker_healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 10m
+    read_only: true
+    tmpfs: ["/tmp:size=128m,noexec,nosuid"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 192
+    mem_limit: 768m
+    cpus: 1.5
+    restart: unless-stopped
+    networks: [backend]
+    logging: *bounded-logs
+
+  caddy:
+    image: caddy:2.10-alpine
+    environment:
+      MAEGIS_API_HOST: ${MAEGIS_API_HOST}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api: { condition: service_healthy }
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    networks: [edge, backend]
+    logging: *bounded-logs
+
+networks:
+  edge:
+  backend:
+    internal: true
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:
