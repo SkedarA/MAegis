@@ -99,6 +99,16 @@ class IncidentView(BaseModel):
     contributions: list[ContributionView] = []
 
 
+class EvidenceView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    evidence_type: str
+    source: str
+    payload: dict
+    raw_hash: str
+    collected_at: datetime
+
+
 class AIAnalysisView(BaseModel):
     classification: str
     severity: str

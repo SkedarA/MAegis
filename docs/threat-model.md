@@ -20,8 +20,8 @@
 | Secret leakage | Environment-backed secrets, no credentials in URLs or logs, public demo is read-only |
 | Queue replay or duplication | Database uniqueness constraints, source checkpoints, idempotent candidate keys |
 | Oversized source artifacts | Streaming zone processing, bounded observations, capture request and body limits |
+| Enrichment SSRF / DNS rebinding | Public-IP validation, connection to the validated address, fixed TLS port, bounded DNS and handshake timeouts |
 
 ## Known residual risks
 
 DNS can change between validation and connection. Production capture should enforce network policy below the browser container in addition to application validation. The current CT adapter is an availability dependency and not a complete monitor. API-key authentication is suitable for the first private deployment; external SaaS access requires OIDC and centrally managed role assignments.
-
