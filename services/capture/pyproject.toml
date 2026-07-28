@@ -1,6 +1,5 @@
 [project]
-name = "aegismark-capture"
+name = "maegis-capture"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = ["playwright>=1.50,<2"]
-

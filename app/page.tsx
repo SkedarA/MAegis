@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type Incident = {
   id: string;
@@ -16,7 +16,7 @@ type Incident = {
   summary: string;
 };
 
-const incidents: Incident[] = [
+const seededIncidents: Incident[] = [
   {
     id: "INC-2048",
     domain: "acme-id-verify.com",
@@ -96,9 +96,11 @@ function severityClass(severity: Incident["severity"]) {
 }
 
 export default function Home() {
+  const [incidents, setIncidents] = useState<Incident[]>(seededIncidents);
+  const [dataMode, setDataMode] = useState<"demo" | "live">("demo");
   const [filter, setFilter] = useState("All");
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<Incident | null>(incidents[0]);
+  const [selected, setSelected] = useState<Incident | null>(seededIncidents[0]);
   const [showSubmission, setShowSubmission] = useState(false);
 
   const visible = useMemo(() => {
@@ -107,12 +109,27 @@ export default function Home() {
       const haystack = `${incident.domain} ${incident.brand} ${incident.source}`.toLowerCase();
       return matchesFilter && haystack.includes(query.toLowerCase());
     });
-  }, [filter, query]);
+  }, [filter, query, incidents]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/incidents", { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("API unavailable")))
+      .then((payload: { mode: "demo" | "live"; incidents: Incident[] }) => {
+        if (payload.mode === "live" && payload.incidents.length > 0) {
+          setIncidents(payload.incidents);
+          setSelected(payload.incidents[0]);
+          setDataMode("live");
+        }
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
 
   return (
     <main className="app-shell">
       <aside className="sidebar">
-        <div className="wordmark"><span className="brand-sigil">A</span><span>AEGISMARK</span></div>
+        <div className="wordmark"><span className="brand-sigil">M</span><span>MAEGIS</span></div>
         <nav aria-label="Primary navigation">
           <p className="nav-label">Monitor</p>
           <a className="nav-item active" href="#overview"><span>⌁</span>Overview</a>
@@ -140,7 +157,7 @@ export default function Home() {
           </div>
         </header>
 
-        <div className="operational-banner"><span className="pulse-dot" /><strong>Live monitoring</strong><span>Last observation 18 seconds ago</span><span className="banner-rule" /><span>Coverage window</span><strong>24/7</strong></div>
+        <div className="operational-banner"><span className="pulse-dot" /><strong>{dataMode === "live" ? "Live monitoring" : "Read-only demonstration"}</strong><span>{dataMode === "live" ? "Connected to the private MAegis API" : "Seeded findings — configure MAEGIS_API_URL for live data"}</span><span className="banner-rule" /><span>Coverage window</span><strong>24/7</strong></div>
 
         <section className="metrics-grid" aria-label="Key risk metrics">
           <article className="metric-card"><div><span>Open incidents</span><b className="trend up">↑ 18%</b></div><strong>47</strong><p>12 require analyst action</p><div className="mini-bars">{[30,42,34,55,49,72,64,83,78,92].map((height, index) => <i key={index} style={{height: `${height}%`}} />)}</div></article>

@@ -1,8 +1,8 @@
-# AegisMark
+# MAegis
 
-AegisMark is an operational brand-abuse monitoring SaaS that discovers suspicious domains, produces reproducible evidence and risk scores, and gives analysts a structured triage queue. It is designed as a master's thesis and public engineering portfolio without pretending that a solo deployment has commercial passive-DNS coverage.
+MAegis is an operational brand-abuse monitoring SaaS that discovers suspicious domains, produces reproducible evidence and risk scores, and gives analysts a structured triage queue. It is designed as a master's thesis and public engineering portfolio without pretending that a solo deployment has commercial passive-DNS coverage.
 
-![AegisMark social preview](public/og.png)
+![MAegis social preview](public/og.png)
 
 ## Current milestone
 
@@ -79,7 +79,7 @@ The response contains the normalized domain, risk, confidence, severity, detecto
 
 ## Safety defaults
 
-- Page capture is disabled unless `AEGISMARK_CAPTURE_ENABLED=true`.
+- Page capture is disabled unless `MAEGIS_CAPTURE_ENABLED=true`.
 - Public, private, loopback, link-local, reserved, credential-bearing, non-HTTP, and nonstandard-port targets are rejected.
 - Redirects and subresources are validated independently.
 - Capture does not enter credentials, submit forms, accept downloads, or preserve sessions.
@@ -101,4 +101,3 @@ CI additionally validates linting and container definitions.
 ## Roadmap
 
 The next implementation increments are DNS record enrichment, API-backed console mutations, full evidence timelines, campaign clustering, OIDC enforcement, OpenAI-compatible grounded analysis, analyst feedback capture, notifications, and signed evidence exports. Commercial passive DNS, Kafka, Kubernetes, and automated takedown are deliberately outside the initial milestone.
-

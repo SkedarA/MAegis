@@ -23,7 +23,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="AegisMark Operational API",
+    title="MAegis Operational API",
     version="0.1.0",
     description="Live brand-abuse discovery, scoring, evidence, and analyst triage.",
     lifespan=lifespan,
@@ -37,7 +37,7 @@ def audit(db: Session, principal: Principal, action: str, resource_type: str, re
 
 @app.get("/api/v1/health")
 def health() -> dict:
-    return {"status": "ok", "service": "aegismark-api", "capture_enabled": get_settings().capture_enabled}
+    return {"status": "ok", "service": "maegis-api", "capture_enabled": get_settings().capture_enabled}
 
 
 @app.post("/api/v1/brands", response_model=BrandView, status_code=status.HTTP_201_CREATED)

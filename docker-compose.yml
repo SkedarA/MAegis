@@ -2,13 +2,13 @@ services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: aegismark
-      POSTGRES_USER: aegismark
-      POSTGRES_PASSWORD: aegismark
+      POSTGRES_DB: maegis
+      POSTGRES_USER: maegis
+      POSTGRES_PASSWORD: maegis
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U aegismark"]
+      test: ["CMD-SHELL", "pg_isready -U maegis"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -17,11 +17,11 @@ services:
   api:
     build: ./services/api
     environment:
-      AEGISMARK_DATABASE_URL: postgresql+psycopg://aegismark:aegismark@postgres:5432/aegismark
-      AEGISMARK_API_KEY: ${AEGISMARK_API_KEY:-development-only}
-      AEGISMARK_CAPTURE_ENABLED: ${AEGISMARK_CAPTURE_ENABLED:-false}
-      AEGISMARK_URLHAUS_AUTH_KEY: ${AEGISMARK_URLHAUS_AUTH_KEY:-}
-      AEGISMARK_CZDS_DIRECTORY: /data/czds
+      MAEGIS_DATABASE_URL: postgresql+psycopg://maegis:maegis@postgres:5432/maegis
+      MAEGIS_API_KEY: ${MAEGIS_API_KEY:-development-only}
+      MAEGIS_CAPTURE_ENABLED: ${MAEGIS_CAPTURE_ENABLED:-false}
+      MAEGIS_URLHAUS_AUTH_KEY: ${MAEGIS_URLHAUS_AUTH_KEY:-}
+      MAEGIS_CZDS_DIRECTORY: /data/czds
     volumes:
       - ./data/czds:/data/czds:ro
     depends_on:
@@ -32,9 +32,9 @@ services:
     build: ./services/api
     command: ["python", "-m", "app.worker"]
     environment:
-      AEGISMARK_DATABASE_URL: postgresql+psycopg://aegismark:aegismark@postgres:5432/aegismark
-      AEGISMARK_URLHAUS_AUTH_KEY: ${AEGISMARK_URLHAUS_AUTH_KEY:-}
-      AEGISMARK_CZDS_DIRECTORY: /data/czds
+      MAEGIS_DATABASE_URL: postgresql+psycopg://maegis:maegis@postgres:5432/maegis
+      MAEGIS_URLHAUS_AUTH_KEY: ${MAEGIS_URLHAUS_AUTH_KEY:-}
+      MAEGIS_CZDS_DIRECTORY: /data/czds
     volumes:
       - ./data/czds:/data/czds:ro
     depends_on:
@@ -46,6 +46,9 @@ services:
       context: .
       dockerfile: Dockerfile.web
     depends_on: [api]
+    environment:
+      MAEGIS_API_URL: http://api:8000
+      MAEGIS_API_KEY: ${MAEGIS_API_KEY:-development-only}
     ports: ["3000:3000"]
 
   safe-capture:
@@ -64,4 +67,3 @@ services:
 volumes:
   postgres-data:
   capture-artifacts:
-

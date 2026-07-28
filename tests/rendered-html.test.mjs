@@ -12,10 +12,9 @@ test("renders the operational analyst console", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /AegisMark/i);
+  assert.match(html, /MAegis/i);
   assert.match(html, /Brand risk command/i);
   assert.match(html, /Incidents requiring attention/i);
   assert.match(html, /Certificate Transparency/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
-

@@ -1,5 +1,5 @@
 [project]
-name = "aegismark-api"
+name = "maegis-api"
 version = "0.1.0"
 description = "Operational brand-abuse discovery and triage API"
 requires-python = ">=3.12"
@@ -20,4 +20,3 @@ test = ["pytest>=8.3,<9"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-

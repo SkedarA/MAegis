@@ -1,2 +1,1 @@
-"""AegisMark operational API."""
-
+"""MAegis operational API."""
