@@ -18,7 +18,7 @@ html { scroll-behavior: smooth; }
 body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--font-geist-sans), Arial, sans-serif; }
 button, input, select { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
-button { cursor: pointer; }
+button { cursor: pointer; } button:disabled { cursor: not-allowed; opacity: .55; }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 236px minmax(0, 1fr); }
 .sidebar { position: fixed; inset: 0 auto 0 0; width: 236px; padding: 24px 16px 18px; background: var(--dark); color: #e9e9e2; display: flex; flex-direction: column; z-index: 20; }
@@ -131,6 +131,23 @@ td:first-child span, td:last-child span { margin-top: 4px; color: #92978e; font-
 .evidence-panel .primary-button { border-color: #d8ddd4; background: #e7e9e2; color: #1e241d; }
 .evidence-panel .secondary-button { border-color: #3e473d; color: #c8cdc5; }
 .empty-detail { display: grid; place-items: center; align-content: center; height: 100%; color: #7b8478; text-align: center; }.empty-detail > span { font-size: 28px; }.empty-detail h3 { margin: 12px 0 5px; }.empty-detail p { font-size: 10px; }
+
+.evidence-timeline { margin-top: 22px; padding-top: 1px; border-top: 1px solid #303730; scroll-margin-top: 20px; }
+.evidence-timeline h3 { display: flex; justify-content: space-between; }.evidence-timeline h3 span { color: #aab1a6; }
+.evidence-timeline ol { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.evidence-timeline li { position: relative; display: grid; grid-template-columns: 14px 1fr; gap: 8px; padding-bottom: 14px; }
+.evidence-timeline li:not(:last-child)::before { content: ""; position: absolute; top: 8px; bottom: -1px; left: 3px; width: 1px; background: #3a4338; }
+.evidence-timeline li > i { z-index: 1; width: 7px; height: 7px; margin-top: 4px; border: 1px solid #91a28c; border-radius: 50%; background: #273027; }
+.evidence-timeline li > div > div { display: flex; justify-content: space-between; gap: 8px; }.evidence-timeline li strong { color: #cbd0c7; font-size: 9px; }.evidence-timeline time { color: #687166; font-family: var(--font-geist-mono); font-size: 8px; }
+.evidence-timeline li p { margin: 4px 0; color: #a3aaa0; font-size: 9px; line-height: 1.45; }.evidence-timeline li span { color: #626b60; font-family: var(--font-geist-mono); font-size: 8px; }
+.timeline-message { color: #7b8478; font-size: 9px; }
+.triage-form { margin-top: 7px; padding-top: 1px; border-top: 1px solid #303730; }
+.triage-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.triage-form label { display: grid; gap: 5px; margin-top: 9px; color: #7d867a; font-size: 8px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.triage-form input, .triage-form select, .triage-form textarea { width: 100%; border: 1px solid #394238; outline: 0; background: #202720; color: #d2d6cf; font-size: 10px; text-transform: none; letter-spacing: 0; }
+.triage-form input, .triage-form select { height: 34px; padding: 0 8px; }.triage-form textarea { min-height: 76px; resize: vertical; padding: 8px; line-height: 1.4; }
+.triage-form input:focus, .triage-form select:focus, .triage-form textarea:focus { border-color: #778974; }
+.triage-form .full { margin-top: 10px; }.form-feedback { margin: 8px 0 0; color: #aeb7aa; font-size: 9px; line-height: 1.4; }
 
 .bottom-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 16px; margin-top: 16px; }
 .all-healthy { color: #64815f; font-size: 9px; }
