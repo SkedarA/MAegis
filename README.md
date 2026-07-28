@@ -9,8 +9,8 @@ MAegis is an operational brand-abuse monitoring SaaS that discovers suspicious d
 The repository implements the first production-shaped vertical slice:
 
 - multi-tenant protected-brand onboarding with legitimate-interest confirmation;
-- targeted Certificate Transparency search, bounded DNS candidate scanning, URLhaus adapter, and streaming CZDS zone-file adapter;
-- IDNA normalization, Unicode confusable checks, edit distance, suspicious-token detection, deterministic scoring, and explicit score contributions;
+- targeted Certificate Transparency and passive urlscan metadata search, bounded DNS candidate scanning, URLhaus adapter, and streaming CZDS zone-file adapter;
+- IDNA normalization, Unicode confusable checks, edit distance, shared-hosting and deceptive-subdomain detection, registry-wildcard suppression, deterministic scoring, and explicit score contributions;
 - durable observations, candidates, incidents, evidence, connector checkpoints, audit events, and PostgreSQL jobs;
 - tenant-scoped incident APIs and an interactive analyst console;
 - API-backed incident evidence timelines, assignment, severity/status decisions, rationale capture, and audited triage;
@@ -24,7 +24,7 @@ Live connectors are intentionally best effort. CZDS files require approved acces
 
 ```mermaid
 flowchart LR
-    CT["CT / CZDS / URLhaus"] --> DW["Discovery worker"]
+    CT["CT / urlscan / CZDS / URLhaus"] --> DW["Discovery worker"]
     DG["Generated candidates"] --> DW
     DW --> DE["Detection + scoring"]
     DE --> PG[("PostgreSQL")]

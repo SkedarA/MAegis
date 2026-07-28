@@ -6,6 +6,41 @@ import type { Incident } from "./incident-types";
 
 const seededIncidents: Incident[] = [
   {
+    id: "INC-R010",
+    domain: "bitdefender-login.pages.dev",
+    brand: "Bitdefender",
+    source: "urlscan public telemetry",
+    score: 80,
+    confidence: 94,
+    severity: "Critical",
+    status: "New",
+    age: "21 hours",
+    firstSeen: "2026-07-27T14:13:20Z",
+    assignedTo: null,
+    signals: ["Brand-plus-login hostname", "Non-official shared hosting", "Fake-support classification", "Endpoint still resolves"],
+    summary: "A current public scan classified this brand-bearing Cloudflare Pages endpoint as potentially malicious and identified it as a fake-support page. It remains queued for analyst confirmation; MAegis does not treat the automated verdict alone as proof.",
+    references: [{ label: "urlscan 019fa3ec", url: "https://urlscan.io/result/019fa3ec-4c1f-759b-8827-6f0a63e8e8f2/" }],
+  },
+  {
+    id: "INC-R009",
+    domain: "fancourier-ro.tracking-portal.click",
+    brand: "FAN Courier",
+    source: "urlscan + FAN Courier advisory",
+    score: 72,
+    confidence: 87,
+    severity: "High",
+    status: "Investigating",
+    age: "5 days",
+    firstSeen: "2026-07-23T08:08:03Z",
+    assignedTo: null,
+    signals: ["Brand-bearing tracking subdomain", "Redirect to a second FAN-themed domain", "Verification lure", "Rapid infrastructure teardown"],
+    summary: "The submitted tracking-themed domain redirected to tracking.fancourier-ro.lol and presented a verification page behind bot controls. The submitted domain is now offline and the redirect host appears parked, so the archived scan—not a live visit—is the retained evidence.",
+    references: [
+      { label: "urlscan 019f8e04", url: "https://urlscan.io/result/019f8e04-7179-72eb-889c-a35b3a34f4f7/" },
+      { label: "FAN Courier 2026 advisory", url: "https://www.fancourier.ro/en/bitdefender-over-one-million-romanians-received-fraudulent-delivery-sms-messages-in-the-largest-online-scam-campaign-of-2026/" },
+    ],
+  },
+  {
     id: "INC-R008",
     domain: "bitdefender-download.com",
     brand: "Bitdefender",
@@ -114,6 +149,7 @@ const seededIncidents: Incident[] = [
 const sources = [
   { name: "Certificate Transparency", state: "Streaming", lag: "18s", seen: "14,829" },
   { name: "DNS candidates", state: "Scanning", lag: "42s", seen: "2,604" },
+  { name: "urlscan metadata", state: "Healthy", lag: "15m", seen: "126" },
   { name: "URLhaus", state: "Healthy", lag: "4m", seen: "186" },
   { name: "CZDS zone delta", state: "Scheduled", lag: "3h", seen: "438k" },
 ];
@@ -170,7 +206,7 @@ export default function Home() {
         </nav>
         <div className="sidebar-status">
           <div className="pulse-dot" />
-          <div><strong>Monitoring active</strong><span>4 sources connected</span></div>
+          <div><strong>Monitoring active</strong><span>5 sources connected</span></div>
         </div>
         <div className="profile"><span className="avatar">AM</span><div><strong>Alex Morgan</strong><span>Senior analyst</span></div><button aria-label="Profile options">•••</button></div>
       </aside>
@@ -184,13 +220,13 @@ export default function Home() {
           </div>
         </header>
 
-        <div className="operational-banner"><span className="pulse-dot" /><strong>{dataMode === "live" ? "Live monitoring" : "Research-backed demonstration"}</strong><span>{dataMode === "live" ? "Connected to the private MAegis API" : "Public-source historical cases — not a live threat feed"}</span><span className="banner-rule" /><span>Evidence policy</span><strong>Source linked</strong></div>
+        <div className="operational-banner"><span className="pulse-dot" /><strong>{dataMode === "live" ? "Live monitoring" : "Research-backed demonstration"}</strong><span>{dataMode === "live" ? "Connected to the private MAegis API" : "Public-source current and historical cases — analyst review required"}</span><span className="banner-rule" /><span>Evidence policy</span><strong>Source linked</strong></div>
 
         <section className="metrics-grid" aria-label="Key risk metrics">
           <article className="metric-card"><div><span>Verified cases</span><b className="trend">Public demo</b></div><strong>{incidents.length}</strong><p>Every case links to public evidence</p><div className="mini-bars">{[52,64,58,73,67,85,78,92].map((height, index) => <i key={index} style={{height: `${height}%`}} />)}</div></article>
           <article className="metric-card"><div><span>Malware delivery</span><b className="trend alert">Confirmed</b></div><strong>01</strong><p>DomainTools technical analysis</p><div className="risk-ring"><span>99</span></div></article>
-          <article className="metric-card"><div><span>Brands represented</span><b className="trend">Archive</b></div><strong>03</strong><p>Bitdefender, eMAG, and UiPath</p><div className="source-stack"><i /><i /><i /><i /></div></article>
-          <article className="metric-card"><div><span>Current open cases</span><b className="trend good">Accurate</b></div><strong>00</strong><p>Historical cases are marked closed</p><div className="sparkline"><i /><i /><i /><i /><i /><i /><i /></div></article>
+          <article className="metric-card"><div><span>Brands represented</span><b className="trend">Coverage</b></div><strong>04</strong><p>Bitdefender, FAN Courier, eMAG, and UiPath</p><div className="source-stack"><i /><i /><i /><i /></div></article>
+          <article className="metric-card"><div><span>Current open cases</span><b className="trend alert">Review</b></div><strong>02</strong><p>New evidence awaits analyst decisions</p><div className="sparkline"><i /><i /><i /><i /><i /><i /><i /></div></article>
         </section>
 
         <section className="content-grid">
@@ -217,7 +253,8 @@ export default function Home() {
         <section className="bottom-grid">
           <article className="panel" id="sources"><div className="panel-heading"><div><p className="eyebrow">Ingestion</p><h2>Source health</h2></div><span className="all-healthy">● All operational</span></div><div className="source-list">{sources.map((source) => <div key={source.name}><span className="source-icon">{source.name[0]}</span><div><strong>{source.name}</strong><span>{source.seen} observations today</span></div><div className="source-state"><strong>{source.state}</strong><span>Lag {source.lag}</span></div></div>)}</div></article>
           <article className="panel coverage-panel" id="brands"><div className="panel-heading"><div><p className="eyebrow">Research portfolio</p><h2>Brand case coverage</h2></div><span className="text-button">Historical baseline</span></div><div className="coverage-list">
-            <div><span className="company-mark amber">BD</span><div><strong>Bitdefender</strong><span>5 verified cases</span></div><em>99</em></div>
+            <div><span className="company-mark amber">BD</span><div><strong>Bitdefender</strong><span>5 closed · 1 under review</span></div><em>99</em></div>
+            <div><span className="company-mark amber">FC</span><div><strong>FAN Courier</strong><span>1 case under review</span></div><em>87</em></div>
             <div><span className="company-mark sage">EM</span><div><strong>eMAG</strong><span>2 verified cases</span></div><em>89</em></div>
             <div><span className="company-mark coral">UI</span><div><strong>UiPath</strong><span>1 verified case</span></div><em>72</em></div>
           </div></article>

@@ -2,6 +2,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from app.enrichment import enrichment_signals, public_addresses, registration_date
+from app.detection import Signal
+from app.scoring import score_signals
 
 
 class EnrichmentTests(unittest.TestCase):
@@ -25,6 +27,11 @@ class EnrichmentTests(unittest.TestCase):
         signals = enrichment_signals(dns, rdap, tls, now=now)
         self.assertEqual([signal.name for signal in signals], ["enrichment.mx_configured", "enrichment.new_registration", "enrichment.recent_certificate"])
         self.assertEqual(sum(signal.weight for signal in signals), 29)
+
+    def test_registry_wildcard_suppresses_lexical_false_positive(self):
+        dns = {"registry_wildcard": {"matched_candidate": True, "query": "maegis-random.ph", "addresses": ["45.79.222.138"]}}
+        signals = [Signal("exact_brand_nonofficial", 1, 38, "Exact brand outside allowlist"), *enrichment_signals(dns, None, None)]
+        self.assertEqual(score_signals(signals).score, 0)
 
 
 if __name__ == "__main__":

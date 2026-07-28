@@ -6,35 +6,84 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from .brand_schedule import select_brand_batch
-from .connectors import CZDSZoneConnector, CertificateTransparencyConnector, DNSCandidateConnector, fetch_rdap
+from .connectors import CZDSZoneConnector, CertificateTransparencyConnector, DNSCandidateConnector, URLScanConnector, fetch_rdap
 from .config import get_settings
 from .database import SessionLocal
-from .detection import analyze_domain, generate_candidates, normalize_domain
+from .detection import DETECTOR_VERSION, Signal, analyze_domain, generate_candidates, normalize_domain
 from .enrichment import enrichment_signals, fetch_dns, fetch_tls
-from .models import BackgroundJob, Candidate, EvidenceItem, Incident, ProtectedBrand, ScoreContribution, Severity, SourceConnector
+from .models import BackgroundJob, Candidate, EvidenceItem, Incident, Observation, ProtectedBrand, ScoreContribution, Severity, SourceConnector
 from .scoring import score_signals
 
 
 def persist_finding(db, brand: ProtectedBrand, domain: str, source: str, raw_hash: str, payload: dict) -> None:
     ascii_domain, unicode_domain = normalize_domain(domain)
-    candidate = db.scalar(select(Candidate).where(Candidate.tenant_id == brand.tenant_id, Candidate.brand_id == brand.id, Candidate.domain == ascii_domain))
-    if candidate:
-        candidate.last_seen_at = datetime.now(timezone.utc)
+    observation = db.scalar(
+        select(Observation).where(
+            Observation.tenant_id == brand.tenant_id,
+            Observation.source == source,
+            Observation.raw_hash == raw_hash,
+        )
+    )
+    if observation:
         return
+    db.add(
+        Observation(
+            tenant_id=brand.tenant_id,
+            brand_id=brand.id,
+            source=source,
+            domain=ascii_domain,
+            url=payload.get("submitted_url") or payload.get("url"),
+            raw_hash=raw_hash,
+            raw_payload=payload,
+            connector_version="1.0",
+        )
+    )
+    candidate = db.scalar(select(Candidate).where(Candidate.tenant_id == brand.tenant_id, Candidate.brand_id == brand.id, Candidate.domain == ascii_domain))
     signals = analyze_domain(ascii_domain, unicode_domain, brand.name, brand.official_domains)
     result = score_signals(signals)
     if result.score < 20:
         return
-    candidate = Candidate(tenant_id=brand.tenant_id, brand_id=brand.id, domain=ascii_domain, unicode_domain=unicode_domain, source=source)
-    db.add(candidate)
-    db.flush()
-    incident = Incident(tenant_id=brand.tenant_id, brand_id=brand.id, candidate_id=candidate.id, domain=ascii_domain, title=f"Potential {brand.name} impersonation", severity=Severity(result.severity), risk_score=result.score, confidence=result.confidence, summary="; ".join(item.explanation for item in signals))
-    db.add(incident)
-    db.flush()
+    if not candidate:
+        candidate = Candidate(tenant_id=brand.tenant_id, brand_id=brand.id, domain=ascii_domain, unicode_domain=unicode_domain, source=source)
+        db.add(candidate)
+        db.flush()
+    else:
+        candidate.last_seen_at = datetime.now(timezone.utc)
+    incident = db.scalar(select(Incident).where(Incident.candidate_id == candidate.id, Incident.tenant_id == brand.tenant_id))
+    if not incident:
+        incident = Incident(
+            tenant_id=brand.tenant_id,
+            brand_id=brand.id,
+            candidate_id=candidate.id,
+            domain=ascii_domain,
+            title=f"Potential {brand.name} impersonation",
+            severity=Severity(result.severity),
+            risk_score=result.score,
+            confidence=result.confidence,
+            summary="; ".join(item.explanation for item in signals),
+            detector_version=DETECTOR_VERSION,
+        )
+        db.add(incident)
+        db.flush()
+        db.add(BackgroundJob(tenant_id=brand.tenant_id, job_type="enrich_domain", payload={"incident_id": incident.id, "domain": ascii_domain}))
+    else:
+        retained_enrichment = [
+            Signal(contribution.signal, contribution.value, contribution.weight, contribution.explanation)
+            for contribution in incident.contributions
+            if contribution.signal.startswith("enrichment.")
+        ]
+        result = score_signals(signals + retained_enrichment, evidence_sources=2 if retained_enrichment else 1)
+        incident.severity = Severity(result.severity)
+        incident.risk_score = result.score
+        incident.confidence = result.confidence
+        incident.summary = "; ".join(item.explanation for item in result.contributions)
+        incident.detector_version = DETECTOR_VERSION
+        incident.updated_at = datetime.now(timezone.utc)
+        for contribution in list(incident.contributions):
+            db.delete(contribution)
     db.add(EvidenceItem(tenant_id=brand.tenant_id, incident_id=incident.id, evidence_type="source_observation", source=source, payload=payload, raw_hash=raw_hash))
-    for signal in signals:
+    for signal in result.contributions:
         db.add(ScoreContribution(incident_id=incident.id, signal=signal.name, weight=signal.weight, value=signal.value, explanation=signal.explanation))
-    db.add(BackgroundJob(tenant_id=brand.tenant_id, job_type="enrich_domain", payload={"incident_id": incident.id, "domain": ascii_domain}))
 
 
 async def poll_live_sources() -> None:
@@ -45,12 +94,15 @@ async def poll_live_sources() -> None:
         for brand in brands:
             scheduled = [
                 (CertificateTransparencyConnector(), brand.canonical_name),
+                (URLScanConnector(), brand.canonical_name),
                 (CZDSZoneConnector(), brand.canonical_name),
             ]
             for candidate in generate_candidates(brand.name, limit=25):
                 scheduled.append((DNSCandidateConnector(), candidate))
             for connector, target in scheduled:
                 state = db.scalar(select(SourceConnector).where(SourceConnector.tenant_id == brand.tenant_id, SourceConnector.connector_type == connector.name))
+                if state and not state.enabled:
+                    continue
                 checkpoint = state.checkpoint if state else {}
                 try:
                     observations, next_checkpoint = await connector.fetch(target, checkpoint)
@@ -148,6 +200,7 @@ async def enrich_incident(db, job: BackgroundJob) -> None:
     incident.risk_score = result.score
     incident.confidence = result.confidence
     incident.severity = Severity(result.severity)
+    incident.detector_version = DETECTOR_VERSION
     incident.updated_at = datetime.now(timezone.utc)
 
 

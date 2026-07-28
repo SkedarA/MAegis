@@ -3,7 +3,20 @@ import unicodedata
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-SUSPICIOUS_TOKENS = {"auth", "billing", "help", "id", "invoice", "login", "pay", "secure", "security", "signin", "support", "update", "verify", "wallet"}
+DETECTOR_VERSION = "rules-2.0"
+SUSPICIOUS_TOKENS = {
+    "account", "auth", "billing", "delivery", "help", "id", "invoice", "login",
+    "pay", "payment", "portal", "secure", "security", "signin", "support", "track",
+    "tracking", "update", "verification", "verify", "wallet",
+}
+SHARED_HOSTING_SUFFIXES = (
+    "github.io",
+    "netlify.app",
+    "pages.dev",
+    "vercel.app",
+    "wasmer.app",
+    "web.app",
+)
 CONFUSABLES = str.maketrans({"а": "a", "е": "e", "і": "i", "ї": "i", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y", "ӏ": "l", "ı": "i"})
 KEYBOARD_NEIGHBORS = {"a": "qwsz", "e": "wsdfr", "i": "ujko", "m": "njk", "o": "iklp", "r": "edft", "t": "rfgy"}
 
@@ -38,6 +51,11 @@ def registrable_label(domain: str) -> str:
 
 def canonical_brand(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKD", value).lower())
+
+
+def is_official_domain(domain: str, official_domains: list[str]) -> bool:
+    normalized = domain.lower().rstrip(".")
+    return any(normalized == item.lower().rstrip(".") or normalized.endswith(f".{item.lower().rstrip('.')}") for item in official_domains)
 
 
 def damerau_levenshtein(left: str, right: str) -> int:
@@ -76,30 +94,54 @@ def script_groups(text: str) -> set[str]:
 
 def analyze_domain(domain: str, unicode_domain: str, brand_name: str, official_domains: list[str]) -> list[Signal]:
     brand = canonical_brand(brand_name)
-    label = registrable_label(unicode_domain)
-    compact_label = canonical_brand(label)
-    distance = damerau_levenshtein(compact_label, brand)
-    similarity = 1 - distance / max(len(compact_label), len(brand), 1)
+    labels = unicode_domain.split(".")
+    candidate_labels = labels[:-1] if len(labels) > 1 else labels
+    compact_labels = [canonical_brand(label) for label in candidate_labels]
     tokens = set(re.split(r"[-_.]", unicode_domain))
     suspicious = sorted(tokens & SUSPICIOUS_TOKENS)
     signals: list[Signal] = []
 
-    if domain in {item.lower().rstrip(".") for item in official_domains}:
-        return [Signal("official_allowlist", 1, -100, "Domain exactly matches the official allowlist")]
-    if brand and brand in compact_label and compact_label != brand:
-        signals.append(Signal("brand_token", 1, 22, "The registrable label contains the protected brand plus additional text"))
-    if 0 < distance <= 2:
-        signals.append(Signal("edit_distance", similarity, 28, f"Brand edit distance is {distance} with similarity {similarity:.2f}"))
+    if is_official_domain(domain, official_domains):
+        return [Signal("official_allowlist", 1, -100, "Domain is the official asset or one of its subdomains")]
+
+    brand_matches = [index for index, compact in enumerate(compact_labels) if brand and brand in compact]
+    exact_matches = [index for index, compact in enumerate(compact_labels) if compact == brand]
+    registrable_index = len(labels) - 2 if len(labels) >= 2 else 0
+
+    if registrable_index in exact_matches:
+        signals.append(Signal("exact_brand_nonofficial", 1, 38, "An exact protected-brand label is registered outside the official allowlist"))
+    if any(compact_labels[index] != brand for index in brand_matches):
+        matched = next(candidate_labels[index] for index in brand_matches if compact_labels[index] != brand)
+        signals.append(Signal("brand_token", 1, 22, f"Hostname label '{matched}' contains the protected brand plus additional text"))
+
+    distances = [
+        (damerau_levenshtein(compact, brand), compact)
+        for compact in compact_labels
+        if brand and compact and brand not in compact and len(compact) >= max(3, len(brand) - 2)
+    ]
+    if distances:
+        distance, nearest = min(distances, key=lambda item: item[0])
+        similarity = 1 - distance / max(len(nearest), len(brand), 1)
+        if 0 < distance <= 2:
+            signals.append(Signal("edit_distance", similarity, 28, f"Nearest hostname label has brand edit distance {distance} with similarity {similarity:.2f}"))
     if suspicious:
         signals.append(Signal("suspicious_tokens", min(len(suspicious) / 2, 1), 20, f"Risk-associated tokens: {', '.join(suspicious)}"))
-    groups = script_groups(label)
-    if len(groups) > 1:
-        signals.append(Signal("mixed_script", 1, 30, f"Label mixes scripts: {', '.join(sorted(groups))}"))
-    mapped = label.translate(CONFUSABLES)
-    if mapped != label and canonical_brand(mapped) == brand:
-        signals.append(Signal("unicode_confusable", 1, 35, "Unicode confusables visually map to the protected brand"))
-    if len(domain.split(".")) > 3 and brand in canonical_brand(domain.split(".")[0]):
-        signals.append(Signal("deceptive_subdomain", 1, 14, "Protected brand appears in a deep subdomain rather than the registrable label"))
+
+    for label in candidate_labels:
+        groups = script_groups(label)
+        if len(groups) > 1:
+            signals.append(Signal("mixed_script", 1, 30, f"Hostname label mixes scripts: {', '.join(sorted(groups))}"))
+            break
+    for label in candidate_labels:
+        mapped = label.translate(CONFUSABLES)
+        if mapped != label and canonical_brand(mapped) == brand:
+            signals.append(Signal("unicode_confusable", 1, 35, "Unicode confusables visually map to the protected brand"))
+            break
+
+    if any(index < registrable_index for index in brand_matches):
+        signals.append(Signal("deceptive_subdomain", 1, 30, "The protected brand appears in a non-official subdomain"))
+    if any(domain == suffix or domain.endswith(f".{suffix}") for suffix in SHARED_HOSTING_SUFFIXES) and brand_matches:
+        signals.append(Signal("shared_hosting_impersonation", 1, 18, "A brand-bearing hostname is deployed on a shared application-hosting suffix"))
     return signals
 
 

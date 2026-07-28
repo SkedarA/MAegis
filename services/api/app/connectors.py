@@ -6,11 +6,12 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
 from .config import get_settings
-from .detection import normalize_domain
+from .detection import canonical_brand, normalize_domain
 
 
 @dataclass(frozen=True)
@@ -91,6 +92,55 @@ class URLhausConnector(Connector):
         if payload.get("query_status") != "ok":
             return [], {"last_domain": target, "last_poll": datetime.now(timezone.utc).isoformat()}
         return [self.observation(self.name, target, payload)], {"last_domain": target, "last_poll": datetime.now(timezone.utc).isoformat()}
+
+
+class URLScanConnector(Connector):
+    """Reads public urlscan search metadata without visiting candidate websites."""
+
+    name = "urlscan"
+
+    async def fetch(self, target: str, checkpoint: dict[str, Any]) -> tuple[list[ConnectorObservation], dict[str, Any]]:
+        query = f"task.url:{target} AND date:>now-30d"
+        async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
+            response = await client.get("https://urlscan.io/api/v1/search/", params={"q": query, "size": 100})
+            response.raise_for_status()
+        payload = response.json()
+        seen = set(checkpoint.get("seen", []))
+        observations: list[ConnectorObservation] = []
+        for row in payload.get("results", []):
+            task = row.get("task") or {}
+            page = row.get("page") or {}
+            scan_id = str(task.get("uuid") or row.get("_id") or "")
+            domains: set[str] = set()
+            for value in (task.get("url"), page.get("url"), page.get("domain")):
+                if not value:
+                    continue
+                candidate = str(value).strip()
+                hostname = urlsplit(candidate if "://" in candidate else f"//{candidate}", scheme="https").hostname
+                if hostname and target in canonical_brand(hostname):
+                    domains.add(hostname)
+            for candidate in sorted(domains):
+                key = f"{scan_id}:{candidate}"
+                if key in seen:
+                    continue
+                try:
+                    domain, _ = normalize_domain(candidate)
+                except ValueError:
+                    continue
+                evidence = {
+                    "scan_id": scan_id,
+                    "scan_url": f"https://urlscan.io/result/{scan_id}/" if scan_id else None,
+                    "submitted_url": task.get("url"),
+                    "effective_url": page.get("url"),
+                    "page_domain": page.get("domain"),
+                    "page_title": page.get("title"),
+                    "page_ip": page.get("ip"),
+                    "observed_at": task.get("time"),
+                    "verdicts": row.get("verdicts") or {},
+                }
+                observations.append(self.observation(self.name, domain, evidence, url=task.get("url")))
+                seen.add(key)
+        return observations, {"seen": sorted(seen)[-3000:], "last_poll": datetime.now(timezone.utc).isoformat(), "query": query}
 
 
 class CZDSZoneConnector(Connector):
