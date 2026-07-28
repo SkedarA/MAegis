@@ -149,6 +149,7 @@ const seededIncidents: Incident[] = [
 const sources = [
   { name: "Certificate Transparency", state: "Streaming", lag: "18s", seen: "14,829" },
   { name: "DNS candidates", state: "Scanning", lag: "42s", seen: "2,604" },
+  { name: "RDAP registration sweep", state: "Rotating", lag: "15m", seen: "320" },
   { name: "urlscan metadata", state: "Healthy", lag: "15m", seen: "126" },
   { name: "URLhaus", state: "Healthy", lag: "4m", seen: "186" },
   { name: "CZDS zone delta", state: "Scheduled", lag: "3h", seen: "438k" },
@@ -206,7 +207,7 @@ export default function Home() {
         </nav>
         <div className="sidebar-status">
           <div className="pulse-dot" />
-          <div><strong>Monitoring active</strong><span>5 sources connected</span></div>
+          <div><strong>Monitoring active</strong><span>6 sources connected</span></div>
         </div>
         <div className="profile"><span className="avatar">AM</span><div><strong>Alex Morgan</strong><span>Senior analyst</span></div><button aria-label="Profile options">•••</button></div>
       </aside>
@@ -226,7 +227,7 @@ export default function Home() {
           <article className="metric-card"><div><span>Verified cases</span><b className="trend">Public demo</b></div><strong>{incidents.length}</strong><p>Every case links to public evidence</p><div className="mini-bars">{[52,64,58,73,67,85,78,92].map((height, index) => <i key={index} style={{height: `${height}%`}} />)}</div></article>
           <article className="metric-card"><div><span>Malware delivery</span><b className="trend alert">Confirmed</b></div><strong>01</strong><p>DomainTools technical analysis</p><div className="risk-ring"><span>99</span></div></article>
           <article className="metric-card"><div><span>Brands represented</span><b className="trend">Coverage</b></div><strong>04</strong><p>Bitdefender, FAN Courier, eMAG, and UiPath</p><div className="source-stack"><i /><i /><i /><i /></div></article>
-          <article className="metric-card"><div><span>Current open cases</span><b className="trend alert">Review</b></div><strong>02</strong><p>New evidence awaits analyst decisions</p><div className="sparkline"><i /><i /><i /><i /><i /><i /><i /></div></article>
+          <article className="metric-card"><div><span>Fresh registration hunt</span><b className="trend alert">Rotating</b></div><strong>250</strong><p>Bounded typo candidates per brand</p><div className="sparkline"><i /><i /><i /><i /><i /><i /><i /></div></article>
         </section>
 
         <section className="content-grid">

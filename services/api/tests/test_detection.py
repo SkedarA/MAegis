@@ -1,6 +1,6 @@
 import unittest
 
-from app.detection import analyze_domain, damerau_levenshtein, generate_candidates, normalize_domain
+from app.detection import analyze_domain, damerau_levenshtein, generate_candidate_variants, generate_candidates, normalize_domain
 from app.scoring import score_signals
 
 
@@ -56,6 +56,25 @@ class DetectionTests(unittest.TestCase):
         self.assertLessEqual(len(candidates), 40)
         self.assertEqual(len(candidates), len(set(candidates)))
         self.assertIn("acme-login.com", candidates)
+
+    def test_candidate_generation_covers_fresh_registration_patterns(self):
+        variants = generate_candidate_variants("Acme", tlds=("com", "ro"), limit=500)
+        by_domain = {item.domain: item.mutation for item in variants}
+        self.assertEqual(by_domain["acme.ro"], "tld_swap")
+        self.assertEqual(by_domain["amce.com"], "adjacent_transposition")
+        self.assertEqual(by_domain["accme.com"], "character_duplication")
+        self.assertEqual(by_domain["acme-payment.ro"], "brand_plus_keyword")
+
+    def test_brand_keywords_feed_candidate_generation(self):
+        variants = generate_candidate_variants("Acme", tlds=("ro",), keywords=("delivery",), limit=100)
+        domains = {item.domain for item in variants}
+        self.assertIn("acme-delivery.ro", domains)
+        self.assertIn("delivery-acme.ro", domains)
+
+    def test_default_budget_remains_mutation_diverse(self):
+        variants = generate_candidate_variants("Bitdefender", limit=250)
+        mutation_types = {item.mutation for item in variants}
+        self.assertTrue({"character_omission", "character_duplication", "adjacent_transposition", "keyboard_substitution"}.issubset(mutation_types))
 
 
 if __name__ == "__main__":

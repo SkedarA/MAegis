@@ -6,16 +6,36 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from .brand_schedule import select_brand_batch
-from .connectors import CZDSZoneConnector, CertificateTransparencyConnector, DNSCandidateConnector, URLScanConnector, fetch_rdap
+from .candidate_schedule import brand_checkpoint, rotating_batch, with_brand_checkpoint
+from .connectors import CZDSZoneConnector, CertificateTransparencyConnector, DNSCandidateConnector, RDAPRegistrationConnector, URLScanConnector, fetch_rdap
 from .config import get_settings
 from .database import SessionLocal
-from .detection import DETECTOR_VERSION, Signal, analyze_domain, generate_candidates, normalize_domain
+from .detection import DETECTOR_VERSION, GeneratedCandidate, Signal, analyze_domain, generate_candidate_variants, is_official_domain, normalize_domain
 from .enrichment import enrichment_signals, fetch_dns, fetch_tls
 from .models import BackgroundJob, Candidate, EvidenceItem, Incident, Observation, ProtectedBrand, ScoreContribution, Severity, SourceConnector
 from .scoring import score_signals
 
 
-def persist_finding(db, brand: ProtectedBrand, domain: str, source: str, raw_hash: str, payload: dict) -> None:
+def get_connector_state(db, brand: ProtectedBrand, connector) -> SourceConnector:
+    state = db.scalar(
+        select(SourceConnector).where(
+            SourceConnector.tenant_id == brand.tenant_id,
+            SourceConnector.connector_type == connector.name,
+        )
+    )
+    if state is None:
+        state = SourceConnector(
+            tenant_id=brand.tenant_id,
+            connector_type=connector.name,
+            enabled=True,
+            status="configured",
+        )
+        db.add(state)
+        db.flush()
+    return state
+
+
+def persist_finding(db, brand: ProtectedBrand, domain: str, source: str, raw_hash: str, payload: dict, connector_version: str = "1.0") -> None:
     ascii_domain, unicode_domain = normalize_domain(domain)
     observation = db.scalar(
         select(Observation).where(
@@ -35,11 +55,13 @@ def persist_finding(db, brand: ProtectedBrand, domain: str, source: str, raw_has
             url=payload.get("submitted_url") or payload.get("url"),
             raw_hash=raw_hash,
             raw_payload=payload,
-            connector_version="1.0",
+            connector_version=connector_version,
         )
     )
     candidate = db.scalar(select(Candidate).where(Candidate.tenant_id == brand.tenant_id, Candidate.brand_id == brand.id, Candidate.domain == ascii_domain))
     signals = analyze_domain(ascii_domain, unicode_domain, brand.name, brand.official_domains)
+    if isinstance(payload.get("rdap"), dict):
+        signals += enrichment_signals(None, payload["rdap"], None)
     result = score_signals(signals)
     if result.score < 20:
         return
@@ -67,10 +89,11 @@ def persist_finding(db, brand: ProtectedBrand, domain: str, source: str, raw_has
         db.flush()
         db.add(BackgroundJob(tenant_id=brand.tenant_id, job_type="enrich_domain", payload={"incident_id": incident.id, "domain": ascii_domain}))
     else:
+        current_signal_names = {signal.name for signal in signals}
         retained_enrichment = [
             Signal(contribution.signal, contribution.value, contribution.weight, contribution.explanation)
             for contribution in incident.contributions
-            if contribution.signal.startswith("enrichment.")
+            if contribution.signal.startswith("enrichment.") and contribution.signal not in current_signal_names
         ]
         result = score_signals(signals + retained_enrichment, evidence_sources=2 if retained_enrichment else 1)
         incident.severity = Severity(result.severity)
@@ -92,35 +115,93 @@ async def poll_live_sources() -> None:
         enrolled = list(db.scalars(select(ProtectedBrand).where(ProtectedBrand.monitoring_enabled.is_(True)).order_by(ProtectedBrand.id)).all())
         brands = select_brand_batch(enrolled, settings.discovery_brand_batch_size)
         for brand in brands:
-            scheduled = [
+            live_connectors = [
                 (CertificateTransparencyConnector(), brand.canonical_name),
                 (URLScanConnector(), brand.canonical_name),
                 (CZDSZoneConnector(), brand.canonical_name),
             ]
-            for candidate in generate_candidates(brand.name, limit=25):
-                scheduled.append((DNSCandidateConnector(), candidate))
-            for connector, target in scheduled:
-                state = db.scalar(select(SourceConnector).where(SourceConnector.tenant_id == brand.tenant_id, SourceConnector.connector_type == connector.name))
-                if state and not state.enabled:
+            for connector, target in live_connectors:
+                state = get_connector_state(db, brand, connector)
+                if not state.enabled:
                     continue
-                checkpoint = state.checkpoint if state else {}
+                checkpoint = brand_checkpoint(state.checkpoint, brand.id)
                 try:
                     observations, next_checkpoint = await connector.fetch(target, checkpoint)
                     for observation in observations:
-                        persist_finding(db, brand, observation.domain, observation.source, observation.raw_hash, observation.payload)
-                    if state:
-                        state.checkpoint = next_checkpoint
-                        state.last_success_at = datetime.now(timezone.utc)
-                        state.status = "healthy"
-                        state.observations_seen += len(observations)
-                        state.last_error = None
+                        persist_finding(db, brand, observation.domain, observation.source, observation.raw_hash, observation.payload, connector.version)
+                    state.checkpoint = with_brand_checkpoint(state.checkpoint, brand.id, next_checkpoint)
+                    state.last_success_at = datetime.now(timezone.utc)
+                    state.status = "healthy"
+                    state.observations_seen += len(observations)
+                    state.last_error = None
                     db.commit()
                 except Exception as exc:  # connector failure must not stop other brands
                     db.rollback()
-                    if state:
-                        state.status = "degraded"
-                        state.last_error = str(exc)[:1000]
-                        db.commit()
+                    state = get_connector_state(db, brand, connector)
+                    state.status = "degraded"
+                    state.last_error = str(exc)[:1000]
+                    db.commit()
+
+            variants = [
+                item
+                for item in generate_candidate_variants(
+                    brand.name,
+                    keywords=brand.keywords,
+                    limit=settings.max_generated_candidates,
+                )
+                if not is_official_domain(item.domain, brand.official_domains)
+            ]
+            await poll_generated_candidates(db, brand, DNSCandidateConnector(), variants, settings.discovery_dns_batch_size)
+            await poll_generated_candidates(db, brand, RDAPRegistrationConnector(), variants, settings.discovery_rdap_batch_size)
+
+
+async def poll_generated_candidates(
+    db,
+    brand: ProtectedBrand,
+    connector,
+    variants: list[GeneratedCandidate],
+    batch_size: int,
+) -> None:
+    state = get_connector_state(db, brand, connector)
+    if not state.enabled:
+        return
+    checkpoint = brand_checkpoint(state.checkpoint, brand.id)
+    cursor = int(checkpoint.get("cursor", 0))
+    batch, _ = rotating_batch(variants, cursor, batch_size)
+    attempted = 0
+    observations_seen = 0
+    failure: Exception | None = None
+    for variant in batch:
+        try:
+            observations, _ = await connector.fetch(variant.domain, {})
+        except Exception as exc:
+            failure = exc
+            break
+        attempted += 1
+        for observation in observations:
+            payload = {**observation.payload, "candidate_generation": variant.evidence()}
+            persist_finding(
+                db,
+                brand,
+                observation.domain,
+                observation.source,
+                observation.raw_hash,
+                payload,
+                connector.version,
+            )
+            observations_seen += 1
+    _, next_cursor = rotating_batch(variants, cursor, attempted)
+    next_checkpoint = {
+        "cursor": next_cursor,
+        "pool_size": len(variants),
+        "last_poll": datetime.now(timezone.utc).isoformat(),
+    }
+    state.checkpoint = with_brand_checkpoint(state.checkpoint, brand.id, next_checkpoint)
+    state.observations_seen += observations_seen
+    state.last_success_at = datetime.now(timezone.utc) if failure is None else state.last_success_at
+    state.status = "degraded" if failure else "healthy"
+    state.last_error = str(failure)[:1000] if failure else None
+    db.commit()
 
 
 async def process_jobs() -> None:

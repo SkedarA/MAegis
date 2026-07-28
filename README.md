@@ -9,7 +9,7 @@ MAegis is an operational brand-abuse monitoring SaaS that discovers suspicious d
 The repository implements the first production-shaped vertical slice:
 
 - multi-tenant protected-brand onboarding with legitimate-interest confirmation;
-- targeted Certificate Transparency and passive urlscan metadata search, bounded DNS candidate scanning, URLhaus adapter, and streaming CZDS zone-file adapter;
+- targeted Certificate Transparency and passive urlscan metadata search, durably rotating DNS and RDAP candidate sweeps, URLhaus adapter, and streaming CZDS zone-file adapter;
 - IDNA normalization, Unicode confusable checks, edit distance, shared-hosting and deceptive-subdomain detection, registry-wildcard suppression, deterministic scoring, and explicit score contributions;
 - durable observations, candidates, incidents, evidence, connector checkpoints, audit events, and PostgreSQL jobs;
 - tenant-scoped incident APIs and an interactive analyst console;
@@ -18,7 +18,9 @@ The repository implements the first production-shaped vertical slice:
 - fail-soft A/AAAA/CNAME/MX/NS/TXT, RDAP, and TLS certificate enrichment with public-IP enforcement and deterministic rescoring;
 - Docker Compose, CI, unit tests, health checks, and operational documentation.
 
-Live connectors are intentionally best effort. CZDS files require approved access, URLhaus requires an auth key, and the included CT search adapter should be replaced by a dedicated checkpointed CT monitor as volume grows.
+Generated lookalikes cover alternate TLDs, omissions, duplications, transpositions, keyboard substitutions and insertions, hyphenation, and brand-keyword combinations. Per-brand cursors ensure the bounded pool is fully rotated instead of repeatedly scanning the same prefix. RDAP checks can identify a registration before DNS or web content appears.
+
+Live connectors are intentionally best effort. CZDS files require approved access, URLhaus requires an auth key, public RDAP services enforce rate limits, and the included CT search adapter should be replaced by a dedicated checkpointed CT monitor as volume grows.
 
 ## Architecture
 

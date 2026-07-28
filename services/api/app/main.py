@@ -58,7 +58,7 @@ def create_brand(payload: BrandCreate, db: Session = Depends(get_db), principal:
     db.add(brand)
     db.flush()
     audit(db, principal, "brand.created", "protected_brand", brand.id, {"name": brand.name})
-    for connector_type in ("certificate_transparency", "dns_candidates", "urlscan", "urlhaus", "czds"):
+    for connector_type in ("certificate_transparency", "dns_candidates", "rdap_candidates", "urlscan", "urlhaus", "czds"):
         existing = db.scalar(select(SourceConnector).where(SourceConnector.tenant_id == principal.tenant_id, SourceConnector.connector_type == connector_type))
         if not existing:
             db.add(SourceConnector(tenant_id=principal.tenant_id, connector_type=connector_type, enabled=connector_type != "czds", status="configured" if connector_type != "czds" else "credential_required"))

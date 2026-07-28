@@ -17,7 +17,7 @@ except ModuleNotFoundError:
     config_stub.get_settings = lambda: None
     sys.modules["app.config"] = config_stub
 
-from app.connectors import URLScanConnector
+from app.connectors import RDAPRegistrationConnector, URLScanConnector
 
 
 class FakeResponse:
@@ -73,6 +73,35 @@ class URLScanConnectorTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(item.payload["scan_url"].startswith("https://urlscan.io/result/") for item in observations))
         replay, _ = await connector.fetch("fancourier", checkpoint)
         self.assertEqual(replay, [])
+
+
+async def fake_registered_rdap(domain):
+    return {
+        "handle": domain.upper(),
+        "status": ["active"],
+        "events": [{"eventAction": "registration", "eventDate": "2026-07-28T08:00:00Z"}],
+        "nameservers": [],
+        "entities": [],
+        "raw": {},
+    }
+
+
+async def fake_missing_rdap(domain):
+    return {"status": "not_found"}
+
+
+class RDAPRegistrationConnectorTests(unittest.IsolatedAsyncioTestCase):
+    @patch("app.connectors.fetch_rdap", fake_registered_rdap)
+    async def test_emits_registered_domain_even_without_dns(self):
+        observations, checkpoint = await RDAPRegistrationConnector().fetch("acmme.ro", {})
+        self.assertEqual([item.domain for item in observations], ["acmme.ro"])
+        self.assertEqual(observations[0].payload["rdap"]["events"][0]["eventAction"], "registration")
+        self.assertEqual(checkpoint["last_domain"], "acmme.ro")
+
+    @patch("app.connectors.fetch_rdap", fake_missing_rdap)
+    async def test_skips_unregistered_candidate(self):
+        observations, _ = await RDAPRegistrationConnector().fetch("acmme.ro", {})
+        self.assertEqual(observations, [])
 
 
 if __name__ == "__main__":

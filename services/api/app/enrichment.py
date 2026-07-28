@@ -170,7 +170,9 @@ def enrichment_signals(
     registered = registration_date(rdap_payload or {})
     if registered:
         age_days = max(0, (current - registered).days)
-        if age_days <= 30:
+        if age_days <= 7:
+            signals.append(Signal("enrichment.just_registered", 1, 22, f"The domain was registered {age_days} days ago"))
+        elif age_days <= 30:
             signals.append(Signal("enrichment.new_registration", 1, 15, f"The domain was registered {age_days} days ago"))
         elif age_days <= 90:
             signals.append(Signal("enrichment.recent_registration", 1, 8, f"The domain was registered {age_days} days ago"))

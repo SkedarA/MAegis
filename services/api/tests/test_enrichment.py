@@ -25,8 +25,14 @@ class EnrichmentTests(unittest.TestCase):
         rdap = {"events": [{"eventAction": "registration", "eventDate": (now - timedelta(days=4)).isoformat()}]}
         tls = {"not_before": (now - timedelta(days=2)).isoformat()}
         signals = enrichment_signals(dns, rdap, tls, now=now)
-        self.assertEqual([signal.name for signal in signals], ["enrichment.mx_configured", "enrichment.new_registration", "enrichment.recent_certificate"])
-        self.assertEqual(sum(signal.weight for signal in signals), 29)
+        self.assertEqual([signal.name for signal in signals], ["enrichment.mx_configured", "enrichment.just_registered", "enrichment.recent_certificate"])
+        self.assertEqual(sum(signal.weight for signal in signals), 36)
+
+    def test_registration_age_bands_are_distinct(self):
+        now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+        for days, expected in ((2, "enrichment.just_registered"), (20, "enrichment.new_registration"), (60, "enrichment.recent_registration")):
+            rdap = {"events": [{"eventAction": "registration", "eventDate": (now - timedelta(days=days)).isoformat()}]}
+            self.assertEqual(enrichment_signals(None, rdap, None, now=now)[0].name, expected)
 
     def test_registry_wildcard_suppresses_lexical_false_positive(self):
         dns = {"registry_wildcard": {"matched_candidate": True, "query": "maegis-random.ph", "addresses": ["45.79.222.138"]}}

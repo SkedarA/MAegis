@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     ai_model: str = "local-model"
     max_generated_candidates: int = 250
     discovery_brand_batch_size: int = 5
+    discovery_dns_batch_size: int = 40
+    discovery_rdap_batch_size: int = 10
     discovery_poll_interval_seconds: int = 900
 
 

@@ -20,6 +20,8 @@ test("renders the operational analyst console", async () => {
   assert.match(html, /bitdefender-login\.pages\.dev/i);
   assert.match(html, /fancourier-ro\.tracking-portal\.click/i);
   assert.match(html, /Certificate Transparency/i);
+  assert.match(html, /RDAP registration sweep/i);
+  assert.match(html, /Fresh registration hunt/i);
   assert.match(html, /Evidence timeline/i);
   assert.match(html, /Decision rationale/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);

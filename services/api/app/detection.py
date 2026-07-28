@@ -3,7 +3,7 @@ import unicodedata
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-DETECTOR_VERSION = "rules-2.0"
+DETECTOR_VERSION = "rules-2.1"
 SUSPICIOUS_TOKENS = {
     "account", "auth", "billing", "delivery", "help", "id", "invoice", "login",
     "pay", "payment", "portal", "secure", "security", "signin", "support", "track",
@@ -18,7 +18,17 @@ SHARED_HOSTING_SUFFIXES = (
     "web.app",
 )
 CONFUSABLES = str.maketrans({"а": "a", "е": "e", "і": "i", "ї": "i", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y", "ӏ": "l", "ı": "i"})
-KEYBOARD_NEIGHBORS = {"a": "qwsz", "e": "wsdfr", "i": "ujko", "m": "njk", "o": "iklp", "r": "edft", "t": "rfgy"}
+KEYBOARD_NEIGHBORS = {
+    "a": "qwsz", "b": "vghn", "c": "xdfv", "d": "ersfcx", "e": "wsdfr",
+    "f": "rtdgcv", "g": "tyfhvb", "h": "yugjbn", "i": "ujko", "j": "uikhmn",
+    "k": "ijolm", "l": "kop", "m": "njk", "n": "bhjm", "o": "iklp",
+    "p": "ol", "q": "wa", "r": "edft", "s": "wedxza", "t": "rfgy",
+    "u": "yhji", "v": "cfgb", "w": "qase", "x": "zsdc", "y": "tghu", "z": "asx",
+}
+DEFAULT_CANDIDATE_TLDS = (
+    "com", "ro", "net", "org", "eu", "co", "io", "info", "online", "site",
+    "shop", "top", "app", "cloud",
+)
 
 
 @dataclass(frozen=True)
@@ -27,6 +37,16 @@ class Signal:
     value: float
     weight: float
     explanation: str
+
+
+@dataclass(frozen=True)
+class GeneratedCandidate:
+    domain: str
+    mutation: str
+    label: str
+
+    def evidence(self) -> dict[str, str]:
+        return {"mutation": self.mutation, "generated_label": self.label}
 
 
 def normalize_domain(value: str) -> tuple[str, str]:
@@ -145,18 +165,64 @@ def analyze_domain(domain: str, unicode_domain: str, brand_name: str, official_d
     return signals
 
 
-def generate_candidates(brand_name: str, tlds: tuple[str, ...] = ("com", "net", "org", "co"), limit: int = 250) -> list[str]:
+def generate_candidate_variants(
+    brand_name: str,
+    tlds: tuple[str, ...] = DEFAULT_CANDIDATE_TLDS,
+    keywords: tuple[str, ...] | list[str] = (),
+    limit: int = 250,
+) -> list[GeneratedCandidate]:
     brand = canonical_brand(brand_name)
-    if len(brand) < 3:
+    if len(brand) < 3 or limit <= 0:
         return []
-    labels: set[str] = set()
+    labels: dict[str, str] = {}
+
+    def add(label: str, mutation: str) -> None:
+        normalized = label.strip("-")
+        if 3 <= len(normalized) <= 63 and normalized != brand:
+            labels.setdefault(normalized, mutation)
+
+    # High-yield combinations are ordered first so even small sweeps cover them.
+    abuse_tokens = tuple(dict.fromkeys((*keywords, "login", "secure", "support", "verify", "account", "payment")))
+    for token in abuse_tokens:
+        compact_token = canonical_brand(token)
+        if not compact_token:
+            continue
+        add(f"{brand}-{compact_token}", "brand_plus_keyword")
+        add(f"{compact_token}-{brand}", "keyword_plus_brand")
+
+    words = [canonical_brand(item) for item in re.findall(r"[A-Za-z0-9]+", brand_name) if canonical_brand(item)]
+    if len(words) > 1:
+        add("-".join(words), "word_boundary_hyphenation")
+
     for i in range(len(brand)):
-        labels.add(brand[:i] + brand[i + 1 :])
+        add(brand[:i] + brand[i + 1 :], "character_omission")
+        add(brand[:i] + brand[i] + brand[i:], "character_duplication")
         if i + 1 < len(brand):
-            labels.add(brand[:i] + brand[i + 1] + brand[i] + brand[i + 2 :])
+            add(brand[:i] + brand[i + 1] + brand[i] + brand[i + 2 :], "adjacent_transposition")
+            add(brand[: i + 1] + "-" + brand[i + 1 :], "hyphen_insertion")
         for replacement in KEYBOARD_NEIGHBORS.get(brand[i], ""):
-            labels.add(brand[:i] + replacement + brand[i + 1 :])
-    for token in ("login", "secure", "support", "verify"):
-        labels.add(f"{brand}-{token}")
-        labels.add(f"{token}-{brand}")
-    return sorted(f"{label}.{tld}" for label in labels if len(label) >= 3 for tld in tlds)[:limit]
+            add(brand[:i] + replacement + brand[i + 1 :], "keyboard_substitution")
+            add(brand[:i] + replacement + brand[i:], "keyboard_insertion")
+
+    variants: list[GeneratedCandidate] = []
+    normalized_tlds = tuple(dict.fromkeys(tld.lower().strip(".") for tld in tlds if tld.strip(".")))
+    for tld in normalized_tlds:
+        variants.append(GeneratedCandidate(f"{brand}.{tld}", "tld_swap", brand))
+        if len(variants) >= limit:
+            return variants
+    # Sweep one TLD across every mutation before adding the next TLD. This keeps
+    # a small pool diverse instead of spending its entire budget on a few labels.
+    for tld in normalized_tlds:
+        for label, mutation in labels.items():
+            variants.append(GeneratedCandidate(f"{label}.{tld}", mutation, label))
+            if len(variants) >= limit:
+                return variants
+    return variants
+
+
+def generate_candidates(
+    brand_name: str,
+    tlds: tuple[str, ...] = DEFAULT_CANDIDATE_TLDS,
+    limit: int = 250,
+) -> list[str]:
+    return [item.domain for item in generate_candidate_variants(brand_name, tlds=tlds, limit=limit)]

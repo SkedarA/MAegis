@@ -1,5 +1,6 @@
 import hashlib
 import gzip
+import asyncio
 import socket
 from pathlib import Path
 from abc import ABC, abstractmethod
@@ -67,14 +68,30 @@ class CertificateTransparencyConnector(Connector):
 
 class DNSCandidateConnector(Connector):
     name = "dns_candidates"
+    version = "1.1"
 
     async def fetch(self, target: str, checkpoint: dict[str, Any]) -> tuple[list[ConnectorObservation], dict[str, Any]]:
         try:
-            addresses = sorted({item[4][0] for item in socket.getaddrinfo(target, 443, proto=socket.IPPROTO_TCP)})
+            rows = await asyncio.to_thread(socket.getaddrinfo, target, 443, 0, socket.SOCK_STREAM, socket.IPPROTO_TCP)
+            addresses = sorted({item[4][0] for item in rows})
         except socket.gaierror:
             return [], checkpoint
         payload = {"addresses": addresses, "queried_domain": target}
         return [self.observation(self.name, target, payload)], {"last_domain": target, "last_poll": datetime.now(timezone.utc).isoformat()}
+
+
+class RDAPRegistrationConnector(Connector):
+    """Checks bounded generated candidates for registration, including names with no DNS yet."""
+
+    name = "rdap_candidates"
+
+    async def fetch(self, target: str, checkpoint: dict[str, Any]) -> tuple[list[ConnectorObservation], dict[str, Any]]:
+        rdap = await fetch_rdap(target)
+        next_checkpoint = {"last_domain": target, "last_poll": datetime.now(timezone.utc).isoformat()}
+        if rdap.get("status") == "not_found":
+            return [], next_checkpoint
+        payload = {"queried_domain": target, "rdap": rdap}
+        return [self.observation(self.name, target, payload)], next_checkpoint
 
 
 class URLhausConnector(Connector):
