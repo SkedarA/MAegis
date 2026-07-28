@@ -1,0 +1,67 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: aegismark
+      POSTGRES_USER: aegismark
+      POSTGRES_PASSWORD: aegismark
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aegismark"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports: ["5432:5432"]
+
+  api:
+    build: ./services/api
+    environment:
+      AEGISMARK_DATABASE_URL: postgresql+psycopg://aegismark:aegismark@postgres:5432/aegismark
+      AEGISMARK_API_KEY: ${AEGISMARK_API_KEY:-development-only}
+      AEGISMARK_CAPTURE_ENABLED: ${AEGISMARK_CAPTURE_ENABLED:-false}
+      AEGISMARK_URLHAUS_AUTH_KEY: ${AEGISMARK_URLHAUS_AUTH_KEY:-}
+      AEGISMARK_CZDS_DIRECTORY: /data/czds
+    volumes:
+      - ./data/czds:/data/czds:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+    ports: ["8000:8000"]
+
+  discovery-worker:
+    build: ./services/api
+    command: ["python", "-m", "app.worker"]
+    environment:
+      AEGISMARK_DATABASE_URL: postgresql+psycopg://aegismark:aegismark@postgres:5432/aegismark
+      AEGISMARK_URLHAUS_AUTH_KEY: ${AEGISMARK_URLHAUS_AUTH_KEY:-}
+      AEGISMARK_CZDS_DIRECTORY: /data/czds
+    volumes:
+      - ./data/czds:/data/czds:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    depends_on: [api]
+    ports: ["3000:3000"]
+
+  safe-capture:
+    profiles: ["capture"]
+    build: ./services/capture
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=256m,noexec,nosuid"]
+    volumes:
+      - capture-artifacts:/artifacts
+    pids_limit: 128
+    mem_limit: 768m
+    command: ["https://example.com", "--output", "/artifacts/example"]
+
+volumes:
+  postgres-data:
+  capture-artifacts:
+

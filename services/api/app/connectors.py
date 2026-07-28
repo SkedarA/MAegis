@@ -1,0 +1,139 @@
+import hashlib
+import gzip
+import socket
+from pathlib import Path
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+
+import httpx
+
+from .config import get_settings
+from .detection import normalize_domain
+
+
+@dataclass(frozen=True)
+class ConnectorObservation:
+    source: str
+    domain: str
+    url: str | None
+    observed_at: datetime
+    raw_hash: str
+    payload: dict[str, Any]
+
+
+class Connector(ABC):
+    name: str
+    version = "1.0"
+
+    @abstractmethod
+    async def fetch(self, target: str, checkpoint: dict[str, Any]) -> tuple[list[ConnectorObservation], dict[str, Any]]:
+        """Return relevant observations and the next durable checkpoint."""
+
+    @staticmethod
+    def observation(source: str, domain: str, payload: dict[str, Any], url: str | None = None) -> ConnectorObservation:
+        raw = repr(sorted(payload.items())).encode()
+        return ConnectorObservation(source, domain, url, datetime.now(timezone.utc), hashlib.sha256(raw).hexdigest(), payload)
+
+
+class CertificateTransparencyConnector(Connector):
+    name = "certificate_transparency"
+
+    async def fetch(self, target: str, checkpoint: dict[str, Any]) -> tuple[list[ConnectorObservation], dict[str, Any]]:
+        settings = get_settings()
+        params = {"q": f"%{target}%", "output": "json"}
+        async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
+            response = await client.get(settings.ct_search_url, params=params)
+            response.raise_for_status()
+        rows = response.json()
+        seen = set(checkpoint.get("seen", []))
+        observations: list[ConnectorObservation] = []
+        for row in rows[:1000]:
+            for value in str(row.get("name_value", "")).splitlines():
+                candidate = value.removeprefix("*.").strip()
+                if target.lower() not in candidate.lower() or candidate in seen:
+                    continue
+                try:
+                    domain, _ = normalize_domain(candidate)
+                except ValueError:
+                    continue
+                observations.append(self.observation(self.name, domain, row))
+                seen.add(domain)
+        next_checkpoint = {"seen": sorted(seen)[-3000:], "last_poll": datetime.now(timezone.utc).isoformat()}
+        return observations, next_checkpoint
+
+
+class DNSCandidateConnector(Connector):
+    name = "dns_candidates"
+
+    async def fetch(self, target: str, checkpoint: dict[str, Any]) -> tuple[list[ConnectorObservation], dict[str, Any]]:
+        try:
+            addresses = sorted({item[4][0] for item in socket.getaddrinfo(target, 443, proto=socket.IPPROTO_TCP)})
+        except socket.gaierror:
+            return [], checkpoint
+        payload = {"addresses": addresses, "queried_domain": target}
+        return [self.observation(self.name, target, payload)], {"last_domain": target, "last_poll": datetime.now(timezone.utc).isoformat()}
+
+
+class URLhausConnector(Connector):
+    name = "urlhaus"
+
+    async def fetch(self, target: str, checkpoint: dict[str, Any]) -> tuple[list[ConnectorObservation], dict[str, Any]]:
+        settings = get_settings()
+        if not settings.urlhaus_auth_key:
+            return [], {**checkpoint, "status": "credential_required"}
+        headers = {"Auth-Key": settings.urlhaus_auth_key}
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post("https://urlhaus-api.abuse.ch/v1/host/", data={"host": target}, headers=headers)
+            response.raise_for_status()
+        payload = response.json()
+        if payload.get("query_status") != "ok":
+            return [], {"last_domain": target, "last_poll": datetime.now(timezone.utc).isoformat()}
+        return [self.observation(self.name, target, payload)], {"last_domain": target, "last_poll": datetime.now(timezone.utc).isoformat()}
+
+
+class CZDSZoneConnector(Connector):
+    """Streams approved CZDS zone files and retains only target-matching names."""
+
+    name = "czds"
+
+    async def fetch(self, target: str, checkpoint: dict[str, Any]) -> tuple[list[ConnectorObservation], dict[str, Any]]:
+        directory = Path(get_settings().czds_directory)
+        observations: list[ConnectorObservation] = []
+        processed = set(checkpoint.get("files", []))
+        files = sorted(directory.glob("*.zone.gz")) if directory.exists() else []
+        compact_target = target.lower().replace("-", "")
+        for path in files:
+            signature = f"{path.name}:{path.stat().st_mtime_ns}:{path.stat().st_size}"
+            if signature in processed:
+                continue
+            with gzip.open(path, "rt", encoding="utf-8", errors="ignore") as stream:
+                for line in stream:
+                    domain = line.partition(" ")[0].rstrip(".").lower()
+                    label = domain.split(".", 1)[0].replace("-", "")
+                    if compact_target not in label:
+                        continue
+                    payload = {"zone_file": path.name, "record": line[:1000].strip()}
+                    observations.append(self.observation(self.name, domain, payload))
+                    if len(observations) >= 5000:
+                        break
+            processed.add(signature)
+        return observations, {"files": sorted(processed)[-1000:], "last_poll": datetime.now(timezone.utc).isoformat()}
+
+
+async def fetch_rdap(domain: str) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+        response = await client.get(f"{get_settings().rdap_base_url}{domain}")
+        if response.status_code == 404:
+            return {"status": "not_found"}
+        response.raise_for_status()
+        data = response.json()
+    return {
+        "handle": data.get("handle"),
+        "status": data.get("status", []),
+        "events": data.get("events", []),
+        "nameservers": [item.get("ldhName") for item in data.get("nameservers", [])],
+        "entities": [{"handle": item.get("handle"), "roles": item.get("roles", [])} for item in data.get("entities", [])],
+        "raw": data,
+    }
