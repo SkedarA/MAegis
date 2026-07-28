@@ -66,6 +66,18 @@ curl -X POST http://localhost:8000/api/v1/brands \
 
 The discovery worker polls enrolled brands and retains only relevant observations. Put approved `*.zone.gz` files under `data/czds/`; full zone contents are streamed and are not inserted into PostgreSQL.
 
+### Enroll the Romanian operational catalog
+
+MAegis includes a reviewed catalog of 32 high-value Romanian and Romanian-international brands. It spans banking, energy, technology, retail, logistics, healthcare, aviation, property, and manufacturing. Official domains are allowlisted assets; inclusion does not imply that abuse has occurred.
+
+Enroll every catalog brand idempotently for the default tenant:
+
+```bash
+docker compose exec api python -m app.seed_brands
+```
+
+Use `--paused` to prepare the records without live polling, or repeat `--brand KEY` to enroll a subset. The equivalent administrator API is `GET /api/v1/brand-catalog` followed by `POST /api/v1/brand-catalog/enroll` with legitimate-interest confirmation. To respect a small operational budget, discovery rotates through five brands every 15 minutes by default; both values are configurable with `MAEGIS_DISCOVERY_BRAND_BATCH_SIZE` and `MAEGIS_DISCOVERY_POLL_INTERVAL_SECONDS`.
+
 ### Submit a live finding manually
 
 ```bash

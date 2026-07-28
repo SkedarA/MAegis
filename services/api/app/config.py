@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     ai_api_key: str | None = None
     ai_model: str = "local-model"
     max_generated_candidates: int = 250
+    discovery_brand_batch_size: int = 5
+    discovery_poll_interval_seconds: int = 900
 
 
 @lru_cache
