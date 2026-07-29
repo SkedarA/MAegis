@@ -44,6 +44,7 @@ export function CaseWorkspace({ incidentId }: { incidentId: string }) {
   const [newAnalystName, setNewAnalystName] = useState("");
   const [newAnalystEmail, setNewAnalystEmail] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedbackKind, setFeedbackKind] = useState<"success" | "error">("success");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -66,70 +67,72 @@ export function CaseWorkspace({ incidentId }: { incidentId: string }) {
       setAnalysts(accountBody.analysts ?? []);
       setSelectedAnalyst(accountBody.me?.id ?? "");
       setNotes(notesBody.notes ?? []);
-    }).catch((error) => { if (error.name !== "AbortError") setFeedback(error.message); }).finally(() => setLoading(false));
+    }).catch((error) => { if (error.name !== "AbortError") { setFeedbackKind("error"); setFeedback(error.message); } }).finally(() => setLoading(false));
     return () => controller.abort();
   }, [incidentId]);
 
   const screenshot = useMemo(() => evidence.find((item) => item.evidenceType.toLowerCase().includes("screenshot")), [evidence]);
   const screenshotUrl = screenshot ? safeUrl(screenshot.payload.url ?? screenshot.payload.artifact_url) : null;
+  const assignedAnalyst = useMemo(() => analysts.find((analyst) => analyst.email === incident?.assignedTo), [analysts, incident?.assignedTo]);
+  const isAssignedToMe = Boolean(me && incident?.assignedTo === me.email);
 
   async function assign(analystId: string) {
     if (!analystId) return;
-    setBusy(true); setFeedback(null);
+    setBusy(true); setFeedback(null); setFeedbackKind("success");
     try {
       const response = await fetch(`/api/incidents/${encodeURIComponent(incidentId)}/assign`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ analystId }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Assignment failed");
       setIncident(body.incident); setStatus("investigating"); setFeedback(`Assigned to ${body.incident.assignedTo}.`);
-    } catch (error) { setFeedback(error instanceof Error ? error.message : "Assignment failed"); }
+    } catch (error) { setFeedbackKind("error"); setFeedback(error instanceof Error ? error.message : "Assignment failed"); }
     finally { setBusy(false); }
   }
 
   async function addNote() {
     if (noteBody.trim().length < 2) return;
-    setBusy(true); setFeedback(null);
+    setBusy(true); setFeedback(null); setFeedbackKind("success");
     try {
       const response = await fetch(`/api/incidents/${encodeURIComponent(incidentId)}/notes`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body: noteBody }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Note could not be saved");
       setNotes((current) => [...current, body.note]); setNoteBody(""); setFeedback("Note added to the audit trail.");
-    } catch (error) { setFeedback(error instanceof Error ? error.message : "Note could not be saved"); }
+    } catch (error) { setFeedbackKind("error"); setFeedback(error instanceof Error ? error.message : "Note could not be saved"); }
     finally { setBusy(false); }
   }
 
   async function createAnalyst() {
     if (newAnalystName.trim().length < 2 || !newAnalystEmail.includes("@")) return;
-    setBusy(true); setFeedback(null);
+    setBusy(true); setFeedback(null); setFeedbackKind("success");
     try {
       const response = await fetch("/api/accounts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ display_name: newAnalystName.trim(), email: newAnalystEmail.trim(), role: "analyst" }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Account could not be created");
       setAnalysts((current) => [...current, body.analyst].sort((left, right) => left.display_name.localeCompare(right.display_name)));
       setSelectedAnalyst(body.analyst.id); setNewAnalystName(""); setNewAnalystEmail(""); setShowAddAnalyst(false); setFeedback("Analyst account created.");
-    } catch (error) { setFeedback(error instanceof Error ? error.message : "Account could not be created"); }
+    } catch (error) { setFeedbackKind("error"); setFeedback(error instanceof Error ? error.message : "Account could not be created"); }
     finally { setBusy(false); }
   }
 
   async function saveDecision() {
     if (rationale.trim().length < 5) return;
-    setBusy(true); setFeedback(null);
+    setBusy(true); setFeedback(null); setFeedbackKind("success");
     try {
       const response = await fetch(`/api/incidents/${encodeURIComponent(incidentId)}/triage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status, severity, assignedTo: incident?.assignedTo ?? "", rationale }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Decision could not be saved");
       setIncident(body.incident); setRationale(""); setFeedback("Decision saved and audited.");
-    } catch (error) { setFeedback(error instanceof Error ? error.message : "Decision could not be saved"); }
+    } catch (error) { setFeedbackKind("error"); setFeedback(error instanceof Error ? error.message : "Decision could not be saved"); }
     finally { setBusy(false); }
   }
 
   async function requestCapture() {
-    setBusy(true); setFeedback(null);
+    setBusy(true); setFeedback(null); setFeedbackKind("success");
     try {
       const response = await fetch(`/api/incidents/${encodeURIComponent(incidentId)}/capture`, { method: "POST" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Capture request failed");
       setFeedback("Isolated capture queued.");
-    } catch (error) { setFeedback(error instanceof Error ? error.message : "Capture request failed"); }
+    } catch (error) { setFeedbackKind("error"); setFeedback(error instanceof Error ? error.message : "Capture request failed"); }
     finally { setBusy(false); }
   }
 
@@ -148,24 +151,28 @@ export function CaseWorkspace({ incidentId }: { incidentId: string }) {
       <div className="case-score"><strong>{incident.score}</strong><span>Risk score</span></div>
     </section>
 
+    <nav className="case-subnav" aria-label="Case sections"><Link href="/">← Review queue</Link><a href="#assessment">Assessment</a><a href="#capture">Capture</a><a href="#evidence">Evidence</a><a href="#notes">Notes</a><a href="#decision">Decision</a></nav>
+
+    <section className="case-facts" aria-label="Case summary facts"><div><span>Owner</span><strong>{assignedAnalyst?.display_name ?? incident.assignedTo ?? "Unassigned"}</strong></div><div><span>Domain type</span><strong>{context?.domain_type === "platform_tenant" ? context.hosting_provider.name ?? "Hosted tenant" : "Registered domain"}</strong></div><div><span>Evidence</span><strong>{evidence.length} collected items</strong></div><div><span>First seen</span><strong>{incident.firstSeen}</strong></div></section>
+
     <section className="case-layout">
       <div className="case-main">
-        <article className="case-card case-summary"><div className="case-card-head"><div><span>Case assessment</span><h2>Why this needs review</h2></div><span className="case-evidence-count">{evidence.length} evidence items</span></div><p>{incident.summary}</p><ul>{incident.signals.map((signal) => <li key={signal}><span>+</span>{signal}</li>)}</ul></article>
+        <article className="case-card case-summary" id="assessment"><div className="case-card-head"><div><span>Case assessment</span><h2>Why this needs review</h2></div><span className="case-evidence-count">{evidence.length} evidence items</span></div><p>{incident.summary}</p><ul>{incident.signals.map((signal) => <li key={signal}><span>+</span>{signal}</li>)}</ul></article>
 
-        <article className="case-card capture-card"><div className="case-card-head"><div><span>Isolated browser</span><h2>Website capture</h2></div><button className="secondary-button" disabled={busy} onClick={requestCapture}>Request capture</button></div>{screenshotUrl ? <a href={screenshotUrl} target="_blank" rel="noreferrer"><Image unoptimized width={1200} height={720} src={screenshotUrl} alt={`Isolated capture of ${incident.domain}`} /></a> : <div className="capture-empty"><span>▧</span><strong>No screenshot collected</strong><p>Capture is disabled by default. When enabled, the worker records a screenshot without submitting forms or credentials.</p></div>}</article>
+        <article className="case-card capture-card" id="capture"><div className="case-card-head"><div><span>Isolated browser</span><h2>Website capture</h2></div><button className="secondary-button" disabled={busy} onClick={requestCapture}>Request capture</button></div>{screenshotUrl ? <a href={screenshotUrl} target="_blank" rel="noreferrer"><Image unoptimized width={1200} height={720} src={screenshotUrl} alt={`Isolated capture of ${incident.domain}`} /></a> : <div className="capture-empty"><span>▧</span><strong>No screenshot collected</strong><p>Capture is disabled by default. When enabled, the worker records a screenshot without submitting forms or credentials.</p></div>}</article>
 
-        <article className="case-card"><div className="case-card-head"><div><span>Collected facts</span><h2>Evidence timeline</h2></div></div><ol className="case-timeline">{evidence.map((item) => { const sourceUrl = safeUrl(item.payload.scan_url ?? item.payload.url); return <li key={item.id}><i /><div><div><strong>{item.evidenceType}</strong><time>{new Date(item.collectedAt).toLocaleString("en-GB")}</time></div><p>{evidenceSummary(item)}</p><span>{item.source} · sha256 {item.rawHash.slice(0, 12)} {sourceUrl && <a href={sourceUrl} target="_blank" rel="noreferrer">Open source ↗</a>}</span></div></li>; })}</ol></article>
+        <article className="case-card" id="evidence"><div className="case-card-head"><div><span>Collected facts</span><h2>Evidence timeline</h2></div></div>{evidence.length === 0 ? <div className="case-empty"><strong>No evidence collected yet</strong><p>The incident was scored from its discovery signal. Wait for enrichment or request a safe capture before making a final decision.</p></div> : <ol className="case-timeline">{evidence.map((item) => { const sourceUrl = safeUrl(item.payload.scan_url ?? item.payload.url); return <li key={item.id}><i /><div><div><strong>{item.evidenceType}</strong><time>{new Date(item.collectedAt).toLocaleString("en-GB")}</time></div><p>{evidenceSummary(item)}</p><span>{item.source} · sha256 {item.rawHash.slice(0, 12)} {sourceUrl && <a href={sourceUrl} target="_blank" rel="noreferrer">Open source ↗</a>}</span></div></li>; })}</ol>}</article>
       </div>
 
       <aside className="case-side">
-        <article className="case-card assignment-card"><div className="case-card-head"><div><span>Ownership</span><h2>Assignment</h2></div><button className="text-button" onClick={() => setShowAddAnalyst((value) => !value)}>+ Add analyst</button></div><div className="assigned-line"><span className="avatar">{incident.assignedTo ? incident.assignedTo.slice(0, 2).toUpperCase() : "—"}</span><div><span>Current analyst</span><strong>{incident.assignedTo ?? "Unassigned"}</strong></div></div><button className="primary-button full" disabled={busy || !me} onClick={() => me && assign(me.id)}>Assign to me</button><div className="assign-other"><select aria-label="Assign another analyst" value={selectedAnalyst} onChange={(event) => setSelectedAnalyst(event.target.value)}><option value="">Select analyst…</option>{analysts.map((analyst) => <option key={analyst.id} value={analyst.id}>{analyst.display_name} · {titleCase(analyst.role)}</option>)}</select><button className="secondary-button" disabled={busy || !selectedAnalyst} onClick={() => assign(selectedAnalyst)}>Assign</button></div>{showAddAnalyst && <div className="add-analyst"><input value={newAnalystName} onChange={(event) => setNewAnalystName(event.target.value)} placeholder="Analyst name" maxLength={160} /><input value={newAnalystEmail} onChange={(event) => setNewAnalystEmail(event.target.value)} placeholder="analyst@example.com" maxLength={254} type="email" /><button className="secondary-button" disabled={busy || newAnalystName.trim().length < 2 || !newAnalystEmail.includes("@")} onClick={createAnalyst}>Create account</button></div>}</article>
+        <article className="case-card assignment-card"><div className="case-card-head"><div><span>Ownership</span><h2>Assignment</h2></div><button className="text-button" onClick={() => setShowAddAnalyst((value) => !value)}>+ Add analyst</button></div><div className="assigned-line"><span className="avatar">{(assignedAnalyst?.display_name ?? incident.assignedTo ?? "—").split(/[ @._-]/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</span><div><span>Current analyst</span><strong>{assignedAnalyst?.display_name ?? incident.assignedTo ?? "Unassigned"}</strong>{assignedAnalyst && <small>{assignedAnalyst.email}</small>}</div></div><button className="primary-button full" disabled={busy || !me || isAssignedToMe} onClick={() => me && assign(me.id)}>{isAssignedToMe ? "Assigned to you" : "Assign to me"}</button><div className="assign-other"><select aria-label="Assign another analyst" value={selectedAnalyst} onChange={(event) => setSelectedAnalyst(event.target.value)}><option value="">Select analyst…</option>{analysts.map((analyst) => <option key={analyst.id} value={analyst.id}>{analyst.display_name} · {titleCase(analyst.role)}</option>)}</select><button className="secondary-button" disabled={busy || !selectedAnalyst} onClick={() => assign(selectedAnalyst)}>Assign</button></div>{showAddAnalyst && <div className="add-analyst"><input value={newAnalystName} onChange={(event) => setNewAnalystName(event.target.value)} placeholder="Analyst name" maxLength={160} /><input value={newAnalystEmail} onChange={(event) => setNewAnalystEmail(event.target.value)} placeholder="analyst@example.com" maxLength={254} type="email" /><button className="secondary-button" disabled={busy || newAnalystName.trim().length < 2 || !newAnalystEmail.includes("@")} onClick={createAnalyst}>Create account</button></div>}</article>
 
-        <article className="case-card intelligence-card"><div className="case-card-head"><div><span>Infrastructure</span><h2>Domain intelligence</h2></div></div><dl><div><dt>Domain type</dt><dd>{context?.domain_type === "platform_tenant" ? "Hosted platform tenant" : "Registered domain"}</dd></div><div><dt>Effective registry target</dt><dd>{context?.registrable_domain ?? "Unknown"}</dd></div><div><dt>Hosting provider</dt><dd>{context?.hosting_provider.name ?? "Not identified"}{context?.hosting_provider.contact && <a href={context.hosting_provider.contact.startsWith("http") ? context.hosting_provider.contact : `mailto:${context.hosting_provider.contact}`}>Contact provider ↗</a>}</dd></div><div><dt>Registrar</dt><dd>{context?.registration_relevant ? context.registrar.name ?? "Not available" : "Not applicable to platform tenant"}{context?.registrar.contact && <a href={context.registrar.contact.startsWith("http") ? context.registrar.contact : `mailto:${context.registrar.contact}`}>Contact registrar ↗</a>}</dd></div><div><dt>Registration date</dt><dd>{context?.registration_relevant ? context.registration_date ? new Date(context.registration_date).toLocaleDateString("en-GB") : "Not available" : "Suppressed — platform registration is unrelated"}</dd></div></dl></article>
+        <article className="case-card intelligence-card"><div className="case-card-head"><div><span>Infrastructure</span><h2>Domain intelligence</h2></div></div>{context?.domain_type === "platform_tenant" && <p className="platform-notice"><strong>Hosted platform tenant</strong>The abusive asset is the customer subdomain. Parent-domain age and registrar data are intentionally excluded.</p>}<dl><div><dt>Domain type</dt><dd>{context?.domain_type === "platform_tenant" ? "Hosted platform tenant" : "Registered domain"}</dd></div><div><dt>Effective registry target</dt><dd>{context?.registrable_domain ?? "Unknown"}</dd></div><div><dt>Hosting provider</dt><dd>{context?.hosting_provider.name ?? "Not identified"}{context?.hosting_provider.contact && <a href={context.hosting_provider.contact.startsWith("http") ? context.hosting_provider.contact : `mailto:${context.hosting_provider.contact}`}>Contact provider ↗</a>}</dd></div><div><dt>Registrar</dt><dd>{context?.registration_relevant ? context.registrar.name ?? "Not available" : "Not applicable to platform tenant"}{context?.registrar.contact && <a href={context.registrar.contact.startsWith("http") ? context.registrar.contact : `mailto:${context.registrar.contact}`}>Contact registrar ↗</a>}</dd></div><div><dt>Registration date</dt><dd>{context?.registration_relevant ? context.registration_date ? new Date(context.registration_date).toLocaleDateString("en-GB") : "Not available" : "Suppressed — platform registration is unrelated"}</dd></div></dl></article>
 
-        <article className="case-card notes-card"><div className="case-card-head"><div><span>Collaboration</span><h2>Analyst notes</h2></div><span>{notes.length}</span></div><div className="notes-list">{notes.length === 0 && <p>No analyst notes yet.</p>}{notes.map((note) => <div key={note.id}><strong>{note.author_name}</strong><time>{new Date(note.created_at).toLocaleString("en-GB")}</time><p>{note.body}</p></div>)}</div><textarea value={noteBody} onChange={(event) => setNoteBody(event.target.value)} maxLength={8000} placeholder="Add an evidence-based observation or handoff note…" /><button className="secondary-button full" disabled={busy || noteBody.trim().length < 2} onClick={addNote}>Add note</button></article>
+        <article className="case-card notes-card" id="notes"><div className="case-card-head"><div><span>Collaboration</span><h2>Analyst notes</h2></div><span>{notes.length}</span></div><div className="notes-list">{notes.length === 0 && <p>No analyst notes yet.</p>}{notes.map((note) => <div key={note.id}><strong>{note.author_name}</strong><time>{new Date(note.created_at).toLocaleString("en-GB")}</time><p>{note.body}</p></div>)}</div><textarea value={noteBody} onChange={(event) => setNoteBody(event.target.value)} maxLength={8000} placeholder="Add an evidence-based observation or handoff note…" /><div className="input-foot"><span>{noteBody.length}/8000</span><button className="secondary-button" disabled={busy || noteBody.trim().length < 2} onClick={addNote}>Add note</button></div></article>
 
-        <article className="case-card decision-card"><div className="case-card-head"><div><span>Disposition</span><h2>Analyst decision</h2></div></div><div className="decision-grid"><label>Status<select value={status} onChange={(event) => setStatus(event.target.value)}>{STATUS_OPTIONS.map((value) => <option key={value} value={value}>{titleCase(value)}</option>)}</select></label><label>Severity<select value={severity} onChange={(event) => setSeverity(event.target.value)}>{SEVERITY_OPTIONS.map((value) => <option key={value} value={value}>{titleCase(value)}</option>)}</select></label></div><label>Rationale<textarea value={rationale} onChange={(event) => setRationale(event.target.value)} placeholder="Separate observed facts from analyst judgment…" /></label><button className="primary-button full" disabled={busy || rationale.trim().length < 5} onClick={saveDecision}>Save decision</button></article>
-        {feedback && <p className="case-feedback" role="status">{feedback}</p>}
+        <article className="case-card decision-card" id="decision"><div className="case-card-head"><div><span>Disposition</span><h2>Analyst decision</h2></div></div><div className="decision-grid"><label>Status<select value={status} onChange={(event) => setStatus(event.target.value)}>{STATUS_OPTIONS.map((value) => <option key={value} value={value}>{titleCase(value)}</option>)}</select></label><label>Severity<select value={severity} onChange={(event) => setSeverity(event.target.value)}>{SEVERITY_OPTIONS.map((value) => <option key={value} value={value}>{titleCase(value)}</option>)}</select></label></div><label>Rationale<textarea value={rationale} onChange={(event) => setRationale(event.target.value)} placeholder="Separate observed facts from analyst judgment…" /></label><p className="decision-help">Final labels remain analyst decisions. MAegis records your rationale and never submits a takedown automatically.</p><button className="primary-button full" disabled={busy || rationale.trim().length < 5} onClick={saveDecision}>Save decision</button></article>
+        {feedback && <p className={`case-feedback case-feedback-${feedbackKind}`} role={feedbackKind === "error" ? "alert" : "status"}>{feedback}</p>}
       </aside>
     </section>
   </main>;

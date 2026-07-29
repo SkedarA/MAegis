@@ -2,14 +2,14 @@ import { backendHeaders, backendUrl, fetchBrandMap, toConsoleIncident, type ApiI
 
 type Context = { params: Promise<{ id: string }> };
 
-export async function GET(_: Request, context: Context) {
+export async function GET(request: Request, context: Context) {
   const { id } = await context.params;
   const url = backendUrl(`/api/v1/incidents/${encodeURIComponent(id)}`);
   if (!url) return Response.json({ error: "Live API is not configured" }, { status: 409 });
   try {
     const [response, brands] = await Promise.all([
-      fetch(url, { headers: backendHeaders(), cache: "no-store", signal: AbortSignal.timeout(7000) }),
-      fetchBrandMap(),
+      fetch(url, { headers: backendHeaders(request), cache: "no-store", signal: AbortSignal.timeout(7000) }),
+      fetchBrandMap(request),
     ]);
     const body = await response.json();
     if (!response.ok) return Response.json({ error: body.detail ?? "Incident unavailable" }, { status: response.status });

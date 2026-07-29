@@ -2,13 +2,13 @@ import { backendHeaders, backendUrl, titleCase } from "../../shared";
 
 type Context = { params: Promise<{ id: string }> };
 
-export async function GET(_: Request, context: Context) {
+export async function GET(request: Request, context: Context) {
   const { id } = await context.params;
   const url = backendUrl(`/api/v1/incidents/${encodeURIComponent(id)}/evidence`);
   if (!url) return Response.json({ mode: "demo", evidence: [] });
   try {
     const response = await fetch(url, {
-      headers: backendHeaders(),
+      headers: backendHeaders(request),
       cache: "no-store",
       signal: AbortSignal.timeout(5000),
     });

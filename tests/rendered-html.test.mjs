@@ -22,7 +22,9 @@ test("renders the operational analyst console", async () => {
   assert.match(html, /fancourier-ro\.tracking-portal\.click/i);
   assert.match(html, /Certificate Transparency/i);
   assert.match(html, /RDAP registration sweep/i);
-  assert.match(html, /Fresh registration hunt/i);
+  assert.match(html, /New findings/i);
+  assert.match(html, /Unassigned/i);
+  assert.match(html, /Incident review queue|Real brand-abuse cases/i);
   assert.match(html, /Evidence timeline/i);
   assert.match(html, /Decision rationale/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
@@ -42,8 +44,8 @@ test("runtime route fails closed when the private worker is unconfigured", async
 
 test("live queue labels do not claim detections are verified", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-  assert.match(page, /Unconfirmed detections requiring analyst triage/);
-  assert.match(page, /Review queue/);
+  assert.match(page, /Unconfirmed detections waiting for first review/);
+  assert.match(page, /Incident review queue/);
 });
 
 test("dedicated incident workspace renders as a separate route", async () => {
@@ -59,6 +61,17 @@ test("account and domain-context routes fail closed without a private API", asyn
   assert.deepEqual(await context.json(), { context: null });
 });
 
+test("manual analysis is read-only when the operational API is absent", async () => {
+  const brands = await request("/api/brands");
+  assert.deepEqual(await brands.json(), { mode: "demo", brands: [] });
+  const submission = await request("/api/submissions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ brandId: "demo", value: "example.test" }),
+  });
+  assert.equal(submission.status, 409);
+});
+
 test("triage route refuses mutations without a private API", async () => {
   const response = await request("/api/incidents/demo/triage", {
     method: "POST",
@@ -67,4 +80,10 @@ test("triage route refuses mutations without a private API", async () => {
   });
   assert.equal(response.status, 409);
   assert.deepEqual(await response.json(), { error: "Live API is not configured" });
+});
+
+test("hosted analyst identity is forwarded to the operational API", async () => {
+  const shared = await readFile(new URL("../app/api/incidents/shared.ts", import.meta.url), "utf8");
+  assert.match(shared, /oai-authenticated-user-email/);
+  assert.match(shared, /oai-authenticated-user-full-name/);
 });

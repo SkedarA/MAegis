@@ -1,12 +1,12 @@
 import { backendHeaders, backendUrl } from "../incidents/shared";
 
-export async function GET() {
+export async function GET(request: Request) {
   const url = backendUrl("/api/v1/runtime/worker");
   if (!url) return Response.json({ mode: "demo", worker: null });
 
   try {
     const response = await fetch(url, {
-      headers: backendHeaders(),
+      headers: backendHeaders(request),
       cache: "no-store",
       signal: AbortSignal.timeout(5000),
     });

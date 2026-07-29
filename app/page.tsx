@@ -163,6 +163,8 @@ type WorkerRuntime = {
   last_cycle_completed_at?: string | null;
 };
 
+type BrandChoice = { id: string; name: string };
+
 function severityClass(severity: Incident["severity"]) {
   return `severity severity-${severity.toLowerCase()}`;
 }
@@ -176,10 +178,40 @@ export default function Home() {
   const [selected, setSelected] = useState<Incident | null>(seededIncidents[0]);
   const [showSubmission, setShowSubmission] = useState(false);
   const [me, setMe] = useState<AnalystAccount | null>(null);
+  const [brands, setBrands] = useState<BrandChoice[]>([]);
+  const [submissionBrandId, setSubmissionBrandId] = useState("");
+  const [submissionValue, setSubmissionValue] = useState("");
+  const [submissionCapture, setSubmissionCapture] = useState(false);
+  const [submissionFeedback, setSubmissionFeedback] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const queueStats = useMemo(() => {
+    const open = incidents.filter((incident) => !["Closed", "False Positive"].includes(incident.status));
+    return {
+      newCount: open.filter((incident) => incident.status === "New").length,
+      investigating: open.filter((incident) => incident.status === "Investigating").length,
+      critical: open.filter((incident) => incident.severity === "Critical").length,
+      unassigned: open.filter((incident) => !incident.assignedTo).length,
+      brands: new Set(incidents.map((incident) => incident.brand)).size,
+    };
+  }, [incidents]);
+
+  const brandCoverage = useMemo(() => {
+    const grouped = new Map<string, { count: number; open: number; maxRisk: number }>();
+    for (const incident of incidents) {
+      const current = grouped.get(incident.brand) ?? { count: 0, open: 0, maxRisk: 0 };
+      current.count += 1;
+      current.open += ["Closed", "False Positive"].includes(incident.status) ? 0 : 1;
+      current.maxRisk = Math.max(current.maxRisk, incident.score);
+      grouped.set(incident.brand, current);
+    }
+    return [...grouped.entries()].sort((left, right) => right[1].maxRisk - left[1].maxRisk).slice(0, 6);
+  }, [incidents]);
 
   const visible = useMemo(() => {
     return incidents.filter((incident) => {
-      const matchesFilter = filter === "All" || incident.status === filter || incident.severity === filter;
+      const matchesFilter = filter === "All"
+        || (filter === "Unassigned" ? !incident.assignedTo && !["Closed", "False Positive"].includes(incident.status) : incident.status === filter || incident.severity === filter);
       const haystack = `${incident.domain} ${incident.brand} ${incident.source}`.toLowerCase();
       return matchesFilter && haystack.includes(query.toLowerCase());
     });
@@ -190,9 +222,9 @@ export default function Home() {
     fetch("/api/incidents", { signal: controller.signal })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error("API unavailable")))
       .then((payload: { mode: "demo" | "live"; incidents: Incident[] }) => {
-        if (payload.mode === "live" && payload.incidents.length > 0) {
+        if (payload.mode === "live") {
           setIncidents(payload.incidents);
-          setSelected(payload.incidents[0]);
+          setSelected(payload.incidents[0] ?? null);
           setDataMode("live");
         }
       })
@@ -207,8 +239,25 @@ export default function Home() {
       .then((response) => response.ok ? response.json() : Promise.reject(new Error("Accounts unavailable")))
       .then((payload: { me: AnalystAccount | null }) => setMe(payload.me))
       .catch(() => undefined);
+    fetch("/api/brands", { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("Brands unavailable")))
+      .then((payload: { brands: BrandChoice[] }) => { setBrands(payload.brands); setSubmissionBrandId(payload.brands[0]?.id ?? ""); })
+      .catch(() => undefined);
     return () => controller.abort();
   }, []);
+
+  async function submitDomain() {
+    if (!submissionBrandId || submissionValue.trim().length < 3) return;
+    setSubmitting(true); setSubmissionFeedback(null);
+    try {
+      const response = await fetch("/api/submissions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ brandId: submissionBrandId, value: submissionValue, requestCapture: submissionCapture }) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Analysis could not be queued");
+      setIncidents((current) => [body.incident, ...current.filter((item) => item.id !== body.incident.id)]);
+      setSelected(body.incident); setSubmissionValue(""); setSubmissionCapture(false); setShowSubmission(false);
+    } catch (error) { setSubmissionFeedback(error instanceof Error ? error.message : "Analysis could not be queued"); }
+    finally { setSubmitting(false); }
+  }
 
   return (
     <main className="app-shell">
@@ -244,23 +293,24 @@ export default function Home() {
         <div className="operational-banner"><span className="pulse-dot" /><strong>{worker?.fresh ? "Live discovery worker" : dataMode === "live" ? "API connected — worker unavailable" : "Research-backed demonstration"}</strong><span>{worker?.fresh ? `Healthy · ${worker.cycle_count ?? 0} completed cycles` : dataMode === "live" ? "Incidents remain available while scanner health is investigated" : "Public-source current and historical cases — analyst review required"}</span><span className="banner-rule" /><span>Evidence policy</span><strong>Source linked</strong></div>
 
         <section className="metrics-grid" aria-label="Key risk metrics">
-          <article className="metric-card"><div><span>{dataMode === "live" ? "Review queue" : "Verified cases"}</span><b className="trend">{dataMode === "live" ? "Live API" : "Public demo"}</b></div><strong>{incidents.length}</strong><p>{dataMode === "live" ? "Unconfirmed detections requiring analyst triage" : "Every case links to public evidence"}</p><div className="mini-bars">{[52,64,58,73,67,85,78,92].map((height, index) => <i key={index} style={{height: `${height}%`}} />)}</div></article>
-          <article className="metric-card"><div><span>Malware delivery</span><b className="trend alert">Confirmed</b></div><strong>01</strong><p>DomainTools technical analysis</p><div className="risk-ring"><span>99</span></div></article>
-          <article className="metric-card"><div><span>Brands represented</span><b className="trend">Coverage</b></div><strong>04</strong><p>Bitdefender, FAN Courier, eMAG, and UiPath</p><div className="source-stack"><i /><i /><i /><i /></div></article>
-          <article className="metric-card"><div><span>Fresh registration hunt</span><b className="trend alert">Rotating</b></div><strong>250</strong><p>Bounded typo candidates per brand</p><div className="sparkline"><i /><i /><i /><i /><i /><i /><i /></div></article>
+          <article className="metric-card"><div><span>New findings</span><b className="trend alert">Needs triage</b></div><strong>{queueStats.newCount}</strong><p>Unconfirmed detections waiting for first review</p><div className="mini-bars">{[52,64,58,73,67,85,78,92].map((height, index) => <i key={index} style={{height: `${height}%`}} />)}</div></article>
+          <article className="metric-card"><div><span>Investigating</span><b className="trend">Active cases</b></div><strong>{queueStats.investigating}</strong><p>Cases currently owned by an analyst</p><div className="risk-ring"><span>{queueStats.investigating}</span></div></article>
+          <article className="metric-card"><div><span>Critical open risk</span><b className="trend alert">Priority</b></div><strong>{queueStats.critical}</strong><p>Open findings requiring accelerated review</p><div className="source-stack"><i /><i /><i /><i /></div></article>
+          <article className="metric-card"><div><span>Unassigned</span><b className={queueStats.unassigned ? "trend alert" : "trend good"}>{queueStats.brands} brands</b></div><strong>{queueStats.unassigned}</strong><p>Open cases without a current owner</p><div className="sparkline"><i /><i /><i /><i /><i /><i /><i /></div></article>
         </section>
 
         <section className="content-grid">
           <article className="panel incidents-panel" id="incidents">
-            <div className="panel-heading"><div><p className="eyebrow">Evidence-backed archive</p><h2>Real brand-abuse cases</h2></div><span className="text-button">Public sources only</span></div>
-            <div className="filters" role="group" aria-label="Filter incidents">{["All", "Critical", "High", "Closed"].map((item) => <button key={item} className={filter === item ? "selected" : ""} onClick={() => setFilter(item)}>{item}{item === "All" && <span>{incidents.length}</span>}</button>)}</div>
+            <div className="panel-heading"><div><p className="eyebrow">Prioritized analyst workflow</p><h2>{dataMode === "live" ? "Incident review queue" : "Real brand-abuse cases"}</h2></div><span className="queue-count">{visible.length} shown · risk ordered</span></div>
+            <div className="filters" role="group" aria-label="Filter incidents">{["All", "New", "Investigating", "Unassigned", "Critical", "Closed"].map((item) => <button key={item} className={filter === item ? "selected" : ""} onClick={() => setFilter(item)}>{item}{item === "All" && <span>{incidents.length}</span>}{item === "Unassigned" && <span>{queueStats.unassigned}</span>}</button>)}</div>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Finding</th><th>Risk</th><th>Status</th><th>First seen</th></tr></thead>
+                <thead><tr><th>Finding</th><th>Risk</th><th>Status</th><th>Owner</th><th>First seen</th></tr></thead>
                 <tbody>{visible.map((incident) => <tr key={incident.id} onClick={() => incident.status === "Investigating" ? window.open(`/incidents/${encodeURIComponent(incident.id)}`, "_blank", "noopener,noreferrer") : setSelected(incident)} className={selected?.id === incident.id ? "active-row" : ""} tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter") window.open(`/incidents/${encodeURIComponent(incident.id)}`, "_blank", "noopener,noreferrer"); }}>
                   <td><a className="incident-link" href={`/incidents/${encodeURIComponent(incident.id)}`} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>{incident.domain} <span>↗</span></a><span>{incident.brand} · {incident.source}</span></td>
                   <td><div className="score"><b>{incident.score}</b><span className={severityClass(incident.severity)}>{incident.severity}</span></div></td>
-                  <td><span className={`status status-${incident.status.toLowerCase()}`}>{incident.status}</span></td>
+                  <td><span className={`status status-${incident.status.toLowerCase().replaceAll(" ", "-")}`}>{incident.status}</span></td>
+                  <td><span className={incident.assignedTo ? "owner owner-assigned" : "owner owner-unassigned"}>{incident.assignedTo ?? "Unassigned"}</span></td>
                   <td><strong>{incident.age}</strong><span>ago</span></td>
                 </tr>)}</tbody>
               </table>
@@ -272,17 +322,12 @@ export default function Home() {
         </section>
 
         <section className="bottom-grid">
-          <article className="panel" id="sources"><div className="panel-heading"><div><p className="eyebrow">Ingestion</p><h2>Source health</h2></div><span className="all-healthy">● All operational</span></div><div className="source-list">{sources.map((source) => <div key={source.name}><span className="source-icon">{source.name[0]}</span><div><strong>{source.name}</strong><span>{source.seen} observations today</span></div><div className="source-state"><strong>{source.state}</strong><span>Lag {source.lag}</span></div></div>)}</div></article>
-          <article className="panel coverage-panel" id="brands"><div className="panel-heading"><div><p className="eyebrow">Research portfolio</p><h2>Brand case coverage</h2></div><span className="text-button">Historical baseline</span></div><div className="coverage-list">
-            <div><span className="company-mark amber">BD</span><div><strong>Bitdefender</strong><span>5 closed · 1 under review</span></div><em>99</em></div>
-            <div><span className="company-mark amber">FC</span><div><strong>FAN Courier</strong><span>1 case under review</span></div><em>87</em></div>
-            <div><span className="company-mark sage">EM</span><div><strong>eMAG</strong><span>2 verified cases</span></div><em>89</em></div>
-            <div><span className="company-mark coral">UI</span><div><strong>UiPath</strong><span>1 verified case</span></div><em>72</em></div>
-          </div></article>
+          <article className="panel" id="sources"><div className="panel-heading"><div><p className="eyebrow">Ingestion</p><h2>Source health</h2></div><span className={worker?.fresh ? "all-healthy" : "health-warning"}>● {worker?.fresh ? "Worker operational" : "Static source snapshot"}</span></div><div className="source-list">{sources.map((source) => <div key={source.name}><span className="source-icon">{source.name[0]}</span><div><strong>{source.name}</strong><span>{source.seen} observations in the reference window</span></div><div className="source-state"><strong>{worker?.fresh ? source.state : "Reference"}</strong><span>{worker?.fresh ? `Lag ${source.lag}` : "Not live telemetry"}</span></div></div>)}</div></article>
+          <article className="panel coverage-panel" id="brands"><div className="panel-heading"><div><p className="eyebrow">Monitored portfolio</p><h2>Brand case coverage</h2></div><span className="queue-count">Top {brandCoverage.length} by risk</span></div><div className="coverage-list">{brandCoverage.map(([brand, coverage], index) => <div key={brand}><span className={`company-mark ${["amber", "sage", "coral", "stone"][index % 4]}`}>{brand.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</span><div><strong>{brand}</strong><span>{coverage.count} findings · {coverage.open} open</span></div><em>{coverage.maxRisk}</em></div>)}</div></article>
         </section>
       </section>
 
-      {showSubmission && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowSubmission(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="submission-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setShowSubmission(false)} aria-label="Close">×</button><p className="eyebrow">Manual submission</p><h2 id="submission-title">Analyze a domain or URL</h2><p>Submit an observation to the same evidence and scoring pipeline used by live connectors.</p><label>Domain or URL<input autoFocus placeholder="example-login.com" /></label><label>Protected brand<select defaultValue="bitdefender"><option value="bitdefender">Bitdefender</option><option value="emag">eMAG</option><option value="uipath">UiPath</option><option value="fan-courier">FAN Courier</option></select></label><label className="check"><input type="checkbox" defaultChecked /> Request isolated page capture</label><button className="primary-button full" onClick={() => setShowSubmission(false)}>Queue analysis</button><small>Live capture never enters credentials or submits forms.</small></section></div>}
+      {showSubmission && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowSubmission(false)}><form className="modal" role="dialog" aria-modal="true" aria-labelledby="submission-title" onSubmit={(event) => { event.preventDefault(); submitDomain(); }} onMouseDown={(event) => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => setShowSubmission(false)} aria-label="Close">×</button><p className="eyebrow">Manual submission</p><h2 id="submission-title">Analyze a domain or URL</h2><p>{dataMode === "live" ? "Submit an observation to the same evidence and scoring pipeline used by live connectors." : "Connect the operational API to submit live observations. Demonstration cases remain read-only."}</p><label>Domain or URL<input autoFocus value={submissionValue} onChange={(event) => setSubmissionValue(event.target.value)} placeholder="example-login.com" maxLength={2048} disabled={dataMode !== "live"} /></label><label>Protected brand<select value={submissionBrandId} onChange={(event) => setSubmissionBrandId(event.target.value)} disabled={dataMode !== "live" || brands.length === 0}><option value="">Choose a monitored brand…</option>{brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}</select></label><label className="check"><input type="checkbox" checked={submissionCapture} onChange={(event) => setSubmissionCapture(event.target.checked)} disabled={dataMode !== "live"} /> Request isolated page capture</label><button className="primary-button full" disabled={submitting || dataMode !== "live" || !submissionBrandId || submissionValue.trim().length < 3}>{submitting ? "Queueing…" : "Queue analysis"}</button>{submissionFeedback && <p className="modal-error" role="alert">{submissionFeedback}</p>}<small>Live capture never enters credentials or submits forms.</small></form></div>}
     </main>
   );
 }
