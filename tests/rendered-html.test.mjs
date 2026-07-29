@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 async function request(path = "/", init) {
@@ -37,6 +38,12 @@ test("runtime route fails closed when the private worker is unconfigured", async
   const response = await request("/api/runtime");
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { mode: "demo", worker: null });
+});
+
+test("live queue labels do not claim detections are verified", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /Unconfirmed detections requiring analyst triage/);
+  assert.match(page, /Review queue/);
 });
 
 test("triage route refuses mutations without a private API", async () => {
