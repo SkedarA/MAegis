@@ -32,6 +32,13 @@ class IncidentPolicyTests(unittest.TestCase):
         self.assertEqual([signal.name for signal in signals], ["threat_feed_verdict"])
         self.assertEqual(source_signals({"verdicts": {"overall": {"malicious": False}}}), [])
 
+    def test_fresh_registration_qualifies_ambiguous_brand(self):
+        signals = [
+            Signal("brand_token", 1, 22, "brand token"),
+            Signal("enrichment.just_registered", 1, 22, "registered today"),
+        ]
+        self.assertTrue(should_create_incident("electrica", signals, 45))
+
 
 if __name__ == "__main__":
     unittest.main()

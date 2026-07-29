@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { IncidentDetail } from "./incident-detail";
-import type { Incident } from "./incident-types";
+import type { AnalystAccount, Incident } from "./incident-types";
 
 const seededIncidents: Incident[] = [
   {
@@ -175,6 +175,7 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Incident | null>(seededIncidents[0]);
   const [showSubmission, setShowSubmission] = useState(false);
+  const [me, setMe] = useState<AnalystAccount | null>(null);
 
   const visible = useMemo(() => {
     return incidents.filter((incident) => {
@@ -202,6 +203,10 @@ export default function Home() {
         if (payload.mode === "live") setWorker(payload.worker);
       })
       .catch(() => undefined);
+    fetch("/api/accounts", { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("Accounts unavailable")))
+      .then((payload: { me: AnalystAccount | null }) => setMe(payload.me))
+      .catch(() => undefined);
     return () => controller.abort();
   }, []);
 
@@ -224,7 +229,7 @@ export default function Home() {
           <div className="pulse-dot" />
           <div><strong>{worker?.fresh ? "Monitoring active" : "Demonstration mode"}</strong><span>{worker?.fresh ? `Discovery cycle ${worker.cycle_count ?? 0}` : "Worker not connected"}</span></div>
         </div>
-        <div className="profile"><span className="avatar">AM</span><div><strong>Alex Morgan</strong><span>Senior analyst</span></div><button aria-label="Profile options">•••</button></div>
+        <div className="profile"><span className="avatar">{(me?.display_name ?? "Local Analyst").split(" ").map((part) => part[0]).join("").slice(0, 2)}</span><div><strong>{me?.display_name ?? "Local Analyst"}</strong><span>{me?.role ?? "analyst"}</span></div><button aria-label="Profile options">•••</button></div>
       </aside>
 
       <section className="workspace" id="overview">
@@ -252,8 +257,8 @@ export default function Home() {
             <div className="table-wrap">
               <table>
                 <thead><tr><th>Finding</th><th>Risk</th><th>Status</th><th>First seen</th></tr></thead>
-                <tbody>{visible.map((incident) => <tr key={incident.id} onClick={() => setSelected(incident)} className={selected?.id === incident.id ? "active-row" : ""} tabIndex={0} onKeyDown={(event) => event.key === "Enter" && setSelected(incident)}>
-                  <td><strong>{incident.domain}</strong><span>{incident.brand} · {incident.source}</span></td>
+                <tbody>{visible.map((incident) => <tr key={incident.id} onClick={() => incident.status === "Investigating" ? window.open(`/incidents/${encodeURIComponent(incident.id)}`, "_blank", "noopener,noreferrer") : setSelected(incident)} className={selected?.id === incident.id ? "active-row" : ""} tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter") window.open(`/incidents/${encodeURIComponent(incident.id)}`, "_blank", "noopener,noreferrer"); }}>
+                  <td><a className="incident-link" href={`/incidents/${encodeURIComponent(incident.id)}`} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>{incident.domain} <span>↗</span></a><span>{incident.brand} · {incident.source}</span></td>
                   <td><div className="score"><b>{incident.score}</b><span className={severityClass(incident.severity)}>{incident.severity}</span></div></td>
                   <td><span className={`status status-${incident.status.toLowerCase()}`}>{incident.status}</span></td>
                   <td><strong>{incident.age}</strong><span>ago</span></td>

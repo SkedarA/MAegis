@@ -23,6 +23,10 @@ export function backendHeaders(extra: Record<string, string> = {}) {
   return {
     ...(process.env.MAEGIS_API_KEY ? { "X-API-Key": process.env.MAEGIS_API_KEY } : {}),
     ...(process.env.MAEGIS_TENANT_ID ? { "X-Tenant-ID": process.env.MAEGIS_TENANT_ID } : {}),
+    "X-User-ID": process.env.MAEGIS_USER_ID ?? "local-analyst",
+    "X-User-Email": process.env.MAEGIS_USER_EMAIL ?? "analyst@maegis.local",
+    "X-User-Name": process.env.MAEGIS_USER_NAME ?? "Local Analyst",
+    "X-Role": process.env.MAEGIS_USER_ROLE ?? "administrator",
     ...extra,
   };
 }

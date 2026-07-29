@@ -64,6 +64,10 @@ services:
     environment:
       MAEGIS_API_URL: http://api:8000
       MAEGIS_API_KEY: ${MAEGIS_API_KEY:-development-only}
+      MAEGIS_USER_ID: ${MAEGIS_USER_ID:-local-analyst}
+      MAEGIS_USER_EMAIL: ${MAEGIS_USER_EMAIL:-analyst@maegis.local}
+      MAEGIS_USER_NAME: ${MAEGIS_USER_NAME:-Local Analyst}
+      MAEGIS_USER_ROLE: ${MAEGIS_USER_ROLE:-administrator}
     ports: ["3000:3000"]
 
   safe-capture:

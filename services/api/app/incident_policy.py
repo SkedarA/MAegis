@@ -11,6 +11,8 @@ HIGH_INTENT_SIGNALS = frozenset(
         "suspicious_tokens",
         "threat_feed_verdict",
         "unicode_confusable",
+        "enrichment.just_registered",
+        "enrichment.new_registration",
         "enrichment.recent_registration",
     }
 )

@@ -88,7 +88,7 @@ export function IncidentDetail({ incident, mode, onClose, onUpdated }: { inciden
     <h2>{incident.domain}</h2><p className="muted">{incident.brand} · observed {incident.age} ago</p>
     <div className="score-block"><div className="large-score">{incident.score}<span>/100</span></div><div><strong>Risk score</strong><span>Confidence {incident.confidence}%</span></div></div>
     <p className="summary">{incident.summary}</p>
-    <div className="detail-actions"><button className="primary-button" disabled={saving} onClick={() => submitTriage("investigating", "Analyst opened an investigation from the priority queue.")}>Start investigation</button><button className="secondary-button" onClick={() => document.getElementById("evidence-timeline")?.scrollIntoView({ behavior: "smooth" })}>View evidence</button></div>
+    <div className="detail-actions"><button className="primary-button" disabled={saving} onClick={() => submitTriage("investigating", "Analyst opened an investigation from the priority queue.")}>Start investigation</button><a className="secondary-button case-open-button" href={`/incidents/${encodeURIComponent(incident.id)}`} target="_blank" rel="noreferrer">Open workspace ↗</a></div>
 
     <section className="evidence-timeline" id="evidence-timeline">
       <h3>Evidence timeline <span>{evidence.length}</span></h3>

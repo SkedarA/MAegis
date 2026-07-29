@@ -73,6 +73,40 @@ class TriageUpdate(BaseModel):
     rationale: str = Field(min_length=5, max_length=4000)
 
 
+class AnalystCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=254, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+    display_name: str = Field(min_length=2, max_length=160)
+    role: Literal["viewer", "analyst", "manager", "administrator"] = "analyst"
+
+
+class AnalystView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    email: str
+    display_name: str
+    role: str
+    active: bool
+
+
+class AssignmentUpdate(BaseModel):
+    analyst_id: str
+
+
+class IncidentNoteCreate(BaseModel):
+    body: str = Field(min_length=2, max_length=8000)
+
+
+class IncidentNoteView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    incident_id: str
+    author_id: str
+    author_email: str
+    author_name: str
+    body: str
+    created_at: datetime
+
+
 class ContributionView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     signal: str

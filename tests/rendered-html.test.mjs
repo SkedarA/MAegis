@@ -46,6 +46,19 @@ test("live queue labels do not claim detections are verified", async () => {
   assert.match(page, /Review queue/);
 });
 
+test("dedicated incident workspace renders as a separate route", async () => {
+  const response = await request("/incidents/demo-case");
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /Preparing analyst workspace/);
+});
+
+test("account and domain-context routes fail closed without a private API", async () => {
+  const accounts = await request("/api/accounts");
+  assert.deepEqual(await accounts.json(), { mode: "demo", me: null, analysts: [] });
+  const context = await request("/api/incidents/demo/context");
+  assert.deepEqual(await context.json(), { context: null });
+});
+
 test("triage route refuses mutations without a private API", async () => {
   const response = await request("/api/incidents/demo/triage", {
     method: "POST",

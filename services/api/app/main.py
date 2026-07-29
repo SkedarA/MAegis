@@ -12,9 +12,10 @@ from .brand_enrollment import enroll_catalog
 from .config import get_settings
 from .database import Base, engine, get_db
 from .detection import analyze_domain, canonical_brand, normalize_domain
-from .models import AuditEvent, BackgroundJob, Candidate, EvidenceItem, Incident, IncidentStatus, ProtectedBrand, ScoreContribution, Severity, SourceConnector, WorkerHeartbeat
+from .domain_context import build_domain_context
+from .models import AnalystAccount, AuditEvent, BackgroundJob, Candidate, EvidenceItem, Incident, IncidentNote, IncidentStatus, ProtectedBrand, ScoreContribution, Severity, SourceConnector, WorkerHeartbeat
 from .runtime_health import worker_is_fresh
-from .schemas import AIAnalysisView, BrandCreate, BrandView, CatalogBrandView, CatalogEnrollmentCreate, CatalogEnrollmentView, EvidenceView, IncidentView, SubmissionCreate, TriageUpdate
+from .schemas import AIAnalysisView, AnalystCreate, AnalystView, AssignmentUpdate, BrandCreate, BrandView, CatalogBrandView, CatalogEnrollmentCreate, CatalogEnrollmentView, EvidenceView, IncidentNoteCreate, IncidentNoteView, IncidentView, SubmissionCreate, TriageUpdate
 from .scoring import score_signals
 from .security import Principal, require_administrator, require_analyst, require_principal
 
@@ -40,6 +41,25 @@ app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_credentials
 
 def audit(db: Session, principal: Principal, action: str, resource_type: str, resource_id: str, payload: dict | None = None) -> None:
     db.add(AuditEvent(tenant_id=principal.tenant_id, actor=principal.subject, action=action, resource_type=resource_type, resource_id=resource_id, payload=payload or {}))
+
+
+def ensure_analyst_account(db: Session, principal: Principal) -> AnalystAccount:
+    account = db.scalar(
+        select(AnalystAccount).where(
+            AnalystAccount.tenant_id == principal.tenant_id,
+            AnalystAccount.email == principal.email,
+        )
+    )
+    if account is None:
+        account = AnalystAccount(
+            tenant_id=principal.tenant_id,
+            email=principal.email,
+            display_name=principal.display_name,
+            role=principal.role,
+        )
+        db.add(account)
+        db.flush()
+    return account
 
 
 @app.get("/api/v1/health")
@@ -69,6 +89,38 @@ def worker_runtime(db: Session) -> dict:
 @app.get("/api/v1/runtime/worker")
 def get_worker_runtime(db: Session = Depends(get_db), _: Principal = Depends(require_principal)) -> dict:
     return worker_runtime(db)
+
+
+@app.get("/api/v1/analysts")
+def list_analysts(db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> dict:
+    current = ensure_analyst_account(db, principal)
+    db.commit()
+    analysts = list(
+        db.scalars(
+            select(AnalystAccount)
+            .where(AnalystAccount.tenant_id == principal.tenant_id, AnalystAccount.active.is_(True))
+            .order_by(AnalystAccount.display_name)
+        )
+    )
+    return {
+        "me": AnalystView.model_validate(current),
+        "analysts": [AnalystView.model_validate(item) for item in analysts],
+    }
+
+
+@app.post("/api/v1/analysts", response_model=AnalystView, status_code=status.HTTP_201_CREATED)
+def create_analyst(payload: AnalystCreate, db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> AnalystAccount:
+    require_administrator(principal)
+    email = payload.email.strip().lower()
+    existing = db.scalar(select(AnalystAccount).where(AnalystAccount.tenant_id == principal.tenant_id, AnalystAccount.email == email))
+    if existing:
+        raise HTTPException(status_code=409, detail="An account with this email already exists")
+    account = AnalystAccount(tenant_id=principal.tenant_id, email=email, display_name=payload.display_name.strip(), role=payload.role)
+    db.add(account)
+    db.flush()
+    audit(db, principal, "analyst.created", "analyst_account", account.id, {"email": account.email, "role": account.role})
+    db.commit()
+    return account
 
 
 @app.post("/api/v1/brands", response_model=BrandView, status_code=status.HTTP_201_CREATED)
@@ -227,6 +279,67 @@ def list_incident_evidence(
             .order_by(EvidenceItem.collected_at, EvidenceItem.id)
         )
     )
+
+
+@app.get("/api/v1/incidents/{incident_id}/case-context")
+def incident_case_context(incident_id: str, db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> dict:
+    incident = db.scalar(select(Incident).where(Incident.id == incident_id, Incident.tenant_id == principal.tenant_id))
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    evidence = list(db.scalars(select(EvidenceItem).where(EvidenceItem.incident_id == incident.id, EvidenceItem.tenant_id == principal.tenant_id)))
+    return build_domain_context(
+        incident.domain,
+        [{"evidence_type": item.evidence_type, "payload": item.payload} for item in evidence],
+    )
+
+
+@app.post("/api/v1/incidents/{incident_id}/assign", response_model=IncidentView)
+def assign_incident(incident_id: str, payload: AssignmentUpdate, db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> Incident:
+    require_analyst(principal)
+    incident = db.scalar(select(Incident).options(selectinload(Incident.contributions)).where(Incident.id == incident_id, Incident.tenant_id == principal.tenant_id))
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    analyst = db.scalar(select(AnalystAccount).where(AnalystAccount.id == payload.analyst_id, AnalystAccount.tenant_id == principal.tenant_id, AnalystAccount.active.is_(True)))
+    if not analyst:
+        raise HTTPException(status_code=404, detail="Analyst account not found")
+    previous = incident.assigned_to
+    incident.assigned_to = analyst.email
+    if incident.status == IncidentStatus.NEW:
+        incident.status = IncidentStatus.INVESTIGATING
+    incident.updated_at = datetime.now(timezone.utc)
+    audit(db, principal, "incident.assigned", "incident", incident.id, {"from": previous, "to": analyst.email})
+    db.commit()
+    return incident
+
+
+@app.get("/api/v1/incidents/{incident_id}/notes", response_model=list[IncidentNoteView])
+def list_incident_notes(incident_id: str, db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> list[IncidentNote]:
+    exists = db.scalar(select(Incident.id).where(Incident.id == incident_id, Incident.tenant_id == principal.tenant_id))
+    if not exists:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return list(db.scalars(select(IncidentNote).where(IncidentNote.incident_id == incident_id, IncidentNote.tenant_id == principal.tenant_id).order_by(IncidentNote.created_at, IncidentNote.id)))
+
+
+@app.post("/api/v1/incidents/{incident_id}/notes", response_model=IncidentNoteView, status_code=status.HTTP_201_CREATED)
+def create_incident_note(incident_id: str, payload: IncidentNoteCreate, db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> IncidentNote:
+    require_analyst(principal)
+    exists = db.scalar(select(Incident.id).where(Incident.id == incident_id, Incident.tenant_id == principal.tenant_id))
+    if not exists:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    account = ensure_analyst_account(db, principal)
+    note = IncidentNote(
+        tenant_id=principal.tenant_id,
+        incident_id=incident_id,
+        author_id=account.id,
+        author_email=account.email,
+        author_name=account.display_name,
+        body=payload.body.strip(),
+    )
+    db.add(note)
+    db.flush()
+    audit(db, principal, "incident.note_added", "incident", incident_id, {"note_id": note.id})
+    db.commit()
+    return note
 
 
 @app.post("/api/v1/incidents/{incident_id}/triage", response_model=IncidentView)
