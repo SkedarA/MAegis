@@ -14,6 +14,7 @@ from .config import get_settings
 from .database import Base, SessionLocal, engine
 from .detection import DETECTOR_VERSION, GeneratedCandidate, Signal, analyze_domain, generate_candidate_variants, is_official_domain, normalize_domain
 from .enrichment import enrichment_signals, fetch_dns, fetch_tls
+from .incident_policy import should_create_incident, source_signals
 from .models import BackgroundJob, Candidate, EvidenceItem, Incident, Observation, ProtectedBrand, ScoreContribution, Severity, SourceConnector, WorkerHeartbeat
 from .scoring import score_signals
 
@@ -96,10 +97,11 @@ def persist_finding(db, brand: ProtectedBrand, domain: str, source: str, raw_has
     )
     candidate = db.scalar(select(Candidate).where(Candidate.tenant_id == brand.tenant_id, Candidate.brand_id == brand.id, Candidate.domain == ascii_domain))
     signals = analyze_domain(ascii_domain, unicode_domain, brand.name, brand.official_domains)
+    signals += source_signals(payload)
     if isinstance(payload.get("rdap"), dict):
         signals += enrichment_signals(None, payload["rdap"], None)
     result = score_signals(signals)
-    if result.score < 20:
+    if not should_create_incident(brand.canonical_name, signals, result.score):
         return
     if not candidate:
         candidate = Candidate(tenant_id=brand.tenant_id, brand_id=brand.id, domain=ascii_domain, unicode_domain=unicode_domain, source=source)
