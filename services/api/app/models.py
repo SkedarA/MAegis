@@ -68,6 +68,29 @@ class ProtectedBrand(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class OfficialAsset(Base):
+    __tablename__ = "official_assets"
+    __table_args__ = (UniqueConstraint("tenant_id", "brand_id", "asset_type", "value", name="uq_official_asset_value"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    brand_id: Mapped[str] = mapped_column(ForeignKey("protected_brands.id"), nullable=False, index=True)
+    asset_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    value: Mapped[str] = mapped_column(String(253), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(160), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ProtectedBrandArchive(Base):
+    __tablename__ = "protected_brand_archives"
+    __table_args__ = (UniqueConstraint("tenant_id", "brand_id", name="uq_archived_brand"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    brand_id: Mapped[str] = mapped_column(ForeignKey("protected_brands.id"), nullable=False, index=True)
+    archived_by: Mapped[str] = mapped_column(String(160), nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    archived_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class SourceConnector(Base):
     __tablename__ = "source_connectors"
     __table_args__ = (UniqueConstraint("tenant_id", "connector_type", name="uq_connector_tenant_type"),)

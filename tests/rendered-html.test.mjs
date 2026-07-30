@@ -81,6 +81,19 @@ test("manual analysis is read-only when the operational API is absent", async ()
   assert.equal(submission.status, 409);
 });
 
+test("protected-brand and whitelist mutations fail closed without the private API", async () => {
+  const assets = await request("/api/brands/demo/assets");
+  assert.deepEqual(await assets.json(), { mode: "demo", assets: [] });
+  for (const [path, method, body] of [
+    ["/api/brands/demo", "DELETE", { rationale: "No longer monitored" }],
+    ["/api/brands/demo/assets", "POST", { asset_type: "domain", value: "example.com" }],
+    ["/api/brands/demo/assets/asset", "DELETE", undefined],
+  ]) {
+    const response = await request(path, { method, headers: { "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    assert.equal(response.status, 409, `${method} ${path}`);
+  }
+});
+
 test("triage route refuses mutations without a private API", async () => {
   const response = await request("/api/incidents/demo/triage", {
     method: "POST",
@@ -95,6 +108,11 @@ test("hosted analyst identity is forwarded to the operational API", async () => 
   const shared = await readFile(new URL("../app/api/incidents/shared.ts", import.meta.url), "utf8");
   assert.match(shared, /oai-authenticated-user-email/);
   assert.match(shared, /oai-authenticated-user-full-name/);
+});
+
+test("incident brand labels include archived portfolio records", async () => {
+  const shared = await readFile(new URL("../app/api/incidents/shared.ts", import.meta.url), "utf8");
+  assert.match(shared, /brands\?include_archived=true/);
 });
 
 test("incident feed combines newest findings with priority cases", async () => {

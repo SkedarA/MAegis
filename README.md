@@ -76,6 +76,8 @@ curl -X POST http://localhost:8000/api/v1/brands \
 
 The discovery worker polls enrolled brands and retains only relevant observations. Put approved `*.zone.gz` files under `data/czds/`; full zone contents are streamed and are not inserted into PostgreSQL.
 
+The **Protected brands** panel manages the live monitoring portfolio in PostgreSQL. Analysts can pause monitoring and maintain tenant-scoped allowlist assets as base domains, exact subdomains, or descendant-only wildcards. Administrators can archive a brand with a required rationale; MAegis removes it from active monitoring but preserves its incidents, evidence, and audit history.
+
 ### Enroll the Romanian operational catalog
 
 MAegis includes a reviewed catalog of 32 high-value Romanian and Romanian-international brands. It spans banking, energy, technology, retail, logistics, healthcare, aviation, property, and manufacturing. Official domains are allowlisted assets; inclusion does not imply that abuse has occurred.

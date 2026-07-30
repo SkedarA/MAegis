@@ -1,6 +1,6 @@
 import unittest
 
-from app.detection import analyze_domain, damerau_levenshtein, generate_candidate_variants, generate_candidates, normalize_domain
+from app.detection import analyze_domain, damerau_levenshtein, generate_candidate_variants, generate_candidates, is_official_domain, normalize_domain
 from app.scoring import score_signals
 
 
@@ -21,6 +21,11 @@ class DetectionTests(unittest.TestCase):
     def test_official_subdomain_is_suppressed(self):
         signals = analyze_domain("login.acme.com", "login.acme.com", "Acme", ["acme.com"])
         self.assertEqual(score_signals(signals).score, 0)
+
+    def test_wildcard_official_asset_suppresses_descendants_only(self):
+        self.assertTrue(is_official_domain("login.service.example", ["*.service.example"]))
+        self.assertTrue(is_official_domain("deep.login.service.example", ["*.service.example"]))
+        self.assertFalse(is_official_domain("service.example", ["*.service.example"]))
 
     def test_brand_token_and_login_raise_score(self):
         signals = analyze_domain("acme-login.com", "acme-login.com", "Acme", ["acme.com"])

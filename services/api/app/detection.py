@@ -3,7 +3,7 @@ import unicodedata
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-DETECTOR_VERSION = "rules-2.3"
+DETECTOR_VERSION = "rules-2.4"
 SUSPICIOUS_TOKENS = {
     "account", "auth", "billing", "delivery", "help", "id", "invoice", "login",
     "pay", "payment", "portal", "secure", "security", "signin", "support", "track",
@@ -92,7 +92,15 @@ def canonical_brand(value: str) -> str:
 
 def is_official_domain(domain: str, official_domains: list[str]) -> bool:
     normalized = domain.lower().rstrip(".")
-    return any(normalized == item.lower().rstrip(".") or normalized.endswith(f".{item.lower().rstrip('.')}") for item in official_domains)
+    for item in official_domains:
+        asset = item.lower().rstrip(".")
+        if asset.startswith("*."):
+            suffix = asset[2:]
+            if normalized != suffix and normalized.endswith(f".{suffix}"):
+                return True
+        elif normalized == asset or normalized.endswith(f".{asset}"):
+            return True
+    return False
 
 
 def damerau_levenshtein(left: str, right: str) -> int:

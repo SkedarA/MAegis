@@ -27,11 +27,31 @@ class BrandView(BaseModel):
     official_domains: list[str]
     keywords: list[str]
     monitoring_enabled: bool
+    archived: bool = False
     created_at: datetime
 
 
 class BrandUpdate(BaseModel):
-    monitoring_enabled: bool
+    monitoring_enabled: bool | None = None
+
+
+class OfficialAssetCreate(BaseModel):
+    asset_type: Literal["domain", "subdomain", "wildcard"]
+    value: str = Field(min_length=3, max_length=253)
+
+
+class OfficialAssetView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    brand_id: str
+    asset_type: str
+    value: str
+    created_by: str
+    created_at: datetime
+
+
+class BrandArchiveCreate(BaseModel):
+    rationale: str = Field(min_length=5, max_length=1000)
 
 
 class CatalogBrandView(BaseModel):

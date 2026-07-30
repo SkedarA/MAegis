@@ -13,9 +13,10 @@ from .config import get_settings
 from .database import Base, engine, get_db
 from .detection import DETECTOR_VERSION, analyze_domain, canonical_brand, normalize_domain
 from .domain_context import build_domain_context
-from .models import AnalystAccount, AuditEvent, BackgroundJob, Candidate, DomainContextOverride, EvidenceItem, Incident, IncidentNote, IncidentStatus, Observation, ProtectedBrand, ScoreContribution, Severity, SourceConnector, WorkerHeartbeat
+from .models import AnalystAccount, AuditEvent, BackgroundJob, Candidate, DomainContextOverride, EvidenceItem, Incident, IncidentNote, IncidentStatus, Observation, OfficialAsset, ProtectedBrand, ProtectedBrandArchive, ScoreContribution, Severity, SourceConnector, WorkerHeartbeat
+from .official_assets import normalize_official_asset
 from .runtime_health import worker_is_fresh
-from .schemas import AIAnalysisView, AnalystCreate, AnalystUpdate, AnalystView, AssignmentUpdate, AuditEventView, BrandCreate, BrandUpdate, BrandView, CatalogBrandView, CatalogEnrollmentCreate, CatalogEnrollmentView, ConnectorUpdate, DomainContextOverrideUpdate, EvidenceView, IncidentNoteCreate, IncidentNoteView, IncidentView, SubmissionCreate, TriageUpdate
+from .schemas import AIAnalysisView, AnalystCreate, AnalystUpdate, AnalystView, AssignmentUpdate, AuditEventView, BrandArchiveCreate, BrandCreate, BrandUpdate, BrandView, CatalogBrandView, CatalogEnrollmentCreate, CatalogEnrollmentView, ConnectorUpdate, DomainContextOverrideUpdate, EvidenceView, IncidentNoteCreate, IncidentNoteView, IncidentView, OfficialAssetCreate, OfficialAssetView, SubmissionCreate, TriageUpdate
 from .scoring import score_signals
 from .security import Principal, require_administrator, require_analyst, require_principal
 
@@ -156,6 +157,8 @@ def create_brand(payload: BrandCreate, db: Session = Depends(get_db), principal:
     )
     db.add(brand)
     db.flush()
+    for value in official:
+        db.add(OfficialAsset(tenant_id=principal.tenant_id, brand_id=brand.id, asset_type="domain", value=value, created_by=principal.email))
     audit(db, principal, "brand.created", "protected_brand", brand.id, {"name": brand.name})
     for connector_type in ("certificate_transparency", "dns_candidates", "rdap_candidates", "urlscan", "urlhaus", "czds"):
         existing = db.scalar(select(SourceConnector).where(SourceConnector.tenant_id == principal.tenant_id, SourceConnector.connector_type == connector_type))
@@ -166,8 +169,27 @@ def create_brand(payload: BrandCreate, db: Session = Depends(get_db), principal:
 
 
 @app.get("/api/v1/brands", response_model=list[BrandView])
-def list_brands(db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> list[ProtectedBrand]:
-    return list(db.scalars(select(ProtectedBrand).where(ProtectedBrand.tenant_id == principal.tenant_id).order_by(ProtectedBrand.name)))
+def list_brands(
+    include_archived: bool = False,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require_principal),
+) -> list[dict]:
+    archived_ids = set(db.scalars(select(ProtectedBrandArchive.brand_id).where(ProtectedBrandArchive.tenant_id == principal.tenant_id)))
+    brands = list(db.scalars(select(ProtectedBrand).where(ProtectedBrand.tenant_id == principal.tenant_id).order_by(ProtectedBrand.name)))
+    return [
+        {
+            "id": brand.id,
+            "name": brand.name,
+            "canonical_name": brand.canonical_name,
+            "official_domains": brand.official_domains,
+            "keywords": brand.keywords,
+            "monitoring_enabled": brand.monitoring_enabled,
+            "archived": brand.id in archived_ids,
+            "created_at": brand.created_at,
+        }
+        for brand in brands
+        if include_archived or brand.id not in archived_ids
+    ]
 
 
 @app.patch("/api/v1/brands/{brand_id}", response_model=BrandView)
@@ -176,10 +198,94 @@ def update_brand(brand_id: str, payload: BrandUpdate, db: Session = Depends(get_
     brand = db.scalar(select(ProtectedBrand).where(ProtectedBrand.id == brand_id, ProtectedBrand.tenant_id == principal.tenant_id))
     if not brand:
         raise HTTPException(status_code=404, detail="Protected brand not found")
-    brand.monitoring_enabled = payload.monitoring_enabled
+    if payload.monitoring_enabled is not None:
+        brand.monitoring_enabled = payload.monitoring_enabled
     audit(db, principal, "brand.monitoring_updated", "protected_brand", brand.id, {"monitoring_enabled": brand.monitoring_enabled})
     db.commit()
     return brand
+
+
+def ensure_official_assets(db: Session, brand: ProtectedBrand, actor: str) -> list[OfficialAsset]:
+    assets = list(db.scalars(select(OfficialAsset).where(OfficialAsset.brand_id == brand.id, OfficialAsset.tenant_id == brand.tenant_id).order_by(OfficialAsset.created_at, OfficialAsset.value)))
+    if assets:
+        return assets
+    for value in brand.official_domains:
+        asset_type = "wildcard" if value.startswith("*.") else "domain"
+        asset = OfficialAsset(tenant_id=brand.tenant_id, brand_id=brand.id, asset_type=asset_type, value=value, created_by=actor)
+        db.add(asset)
+        assets.append(asset)
+    db.flush()
+    return assets
+
+
+def sync_brand_allowlist(db: Session, brand: ProtectedBrand) -> None:
+    brand.official_domains = list(db.scalars(select(OfficialAsset.value).where(OfficialAsset.brand_id == brand.id, OfficialAsset.tenant_id == brand.tenant_id).order_by(OfficialAsset.value)))
+
+
+@app.get("/api/v1/brands/{brand_id}/assets", response_model=list[OfficialAssetView])
+def list_official_assets(brand_id: str, db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> list[OfficialAsset]:
+    brand = db.scalar(select(ProtectedBrand).where(ProtectedBrand.id == brand_id, ProtectedBrand.tenant_id == principal.tenant_id))
+    if not brand:
+        raise HTTPException(status_code=404, detail="Protected brand not found")
+    assets = ensure_official_assets(db, brand, principal.email)
+    db.commit()
+    return assets
+
+
+@app.post("/api/v1/brands/{brand_id}/assets", response_model=OfficialAssetView, status_code=status.HTTP_201_CREATED)
+def create_official_asset(brand_id: str, payload: OfficialAssetCreate, db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> OfficialAsset:
+    require_analyst(principal)
+    brand = db.scalar(select(ProtectedBrand).where(ProtectedBrand.id == brand_id, ProtectedBrand.tenant_id == principal.tenant_id))
+    if not brand:
+        raise HTTPException(status_code=404, detail="Protected brand not found")
+    try:
+        value = normalize_official_asset(payload.value, payload.asset_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    ensure_official_assets(db, brand, principal.email)
+    existing = db.scalar(select(OfficialAsset).where(OfficialAsset.brand_id == brand.id, OfficialAsset.tenant_id == principal.tenant_id, OfficialAsset.asset_type == payload.asset_type, OfficialAsset.value == value))
+    if existing:
+        raise HTTPException(status_code=409, detail="This whitelist asset already exists")
+    asset = OfficialAsset(tenant_id=principal.tenant_id, brand_id=brand.id, asset_type=payload.asset_type, value=value, created_by=principal.email)
+    db.add(asset)
+    db.flush()
+    sync_brand_allowlist(db, brand)
+    audit(db, principal, "official_asset.created", "protected_brand", brand.id, {"asset_id": asset.id, "asset_type": asset.asset_type, "value": asset.value})
+    db.commit()
+    return asset
+
+
+@app.delete("/api/v1/brands/{brand_id}/assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_official_asset(brand_id: str, asset_id: str, db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> None:
+    require_analyst(principal)
+    brand = db.scalar(select(ProtectedBrand).where(ProtectedBrand.id == brand_id, ProtectedBrand.tenant_id == principal.tenant_id))
+    asset = db.scalar(select(OfficialAsset).where(OfficialAsset.id == asset_id, OfficialAsset.brand_id == brand_id, OfficialAsset.tenant_id == principal.tenant_id))
+    if not brand or not asset:
+        raise HTTPException(status_code=404, detail="Whitelist asset not found")
+    count = db.scalar(select(func.count(OfficialAsset.id)).where(OfficialAsset.brand_id == brand.id, OfficialAsset.tenant_id == principal.tenant_id)) or 0
+    if count <= 1:
+        raise HTTPException(status_code=409, detail="A protected brand must retain at least one official asset")
+    before = {"asset_type": asset.asset_type, "value": asset.value}
+    db.delete(asset)
+    db.flush()
+    sync_brand_allowlist(db, brand)
+    audit(db, principal, "official_asset.deleted", "protected_brand", brand.id, before)
+    db.commit()
+
+
+@app.delete("/api/v1/brands/{brand_id}", status_code=status.HTTP_204_NO_CONTENT)
+def archive_brand(brand_id: str, payload: BrandArchiveCreate, db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> None:
+    require_administrator(principal)
+    brand = db.scalar(select(ProtectedBrand).where(ProtectedBrand.id == brand_id, ProtectedBrand.tenant_id == principal.tenant_id))
+    if not brand:
+        raise HTTPException(status_code=404, detail="Protected brand not found")
+    existing = db.scalar(select(ProtectedBrandArchive).where(ProtectedBrandArchive.brand_id == brand.id, ProtectedBrandArchive.tenant_id == principal.tenant_id))
+    if existing:
+        raise HTTPException(status_code=409, detail="Protected brand is already archived")
+    brand.monitoring_enabled = False
+    db.add(ProtectedBrandArchive(tenant_id=principal.tenant_id, brand_id=brand.id, archived_by=principal.email, rationale=payload.rationale.strip()))
+    audit(db, principal, "brand.archived", "protected_brand", brand.id, {"name": brand.name, "rationale": payload.rationale})
+    db.commit()
 
 
 @app.get("/api/v1/brand-catalog", response_model=list[CatalogBrandView])

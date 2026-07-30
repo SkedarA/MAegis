@@ -77,7 +77,7 @@ export function toConsoleIncident(row: ApiIncident, brands: Map<string, string>)
 }
 
 export async function fetchBrandMap(request?: Request) {
-  const url = backendUrl("/api/v1/brands");
+  const url = backendUrl("/api/v1/brands?include_archived=true");
   if (!url) return new Map<string, string>();
   const response = await fetch(url, { headers: backendHeaders(request), cache: "no-store", signal: AbortSignal.timeout(5000) });
   if (!response.ok) return new Map<string, string>();

@@ -5,7 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import type { AnalystAccount } from "./incident-types";
 
 type Section = "brands" | "discovery" | "team" | "audit" | "settings";
-type Brand = { id: string; name: string; canonical_name: string; official_domains: string[]; keywords: string[]; monitoring_enabled: boolean; created_at: string };
+type Brand = { id: string; name: string; canonical_name: string; official_domains: string[]; keywords: string[]; monitoring_enabled: boolean; archived?: boolean; created_at: string };
+type OfficialAsset = { id: string; brand_id: string; asset_type: "domain" | "subdomain" | "wildcard"; value: string; created_by: string; created_at: string };
 type Connector = { id: string; type: string; enabled: boolean; status: string; observations_seen: number; last_success_at: string | null; last_error: string | null };
 type AuditEvent = { id: string; actor: string; action: string; resource_type: string; resource_id: string; payload: Record<string, unknown>; created_at: string };
 type OperationsSummary = { brands: number; active_brands: number; observations: number; candidates: number; incidents: number; open_incidents: number; evidence_items: number; jobs: Record<string, number>; worker: { fresh: boolean; status: string; cycle_count?: number; last_cycle_completed_at?: string | null } };
@@ -39,6 +40,11 @@ export function OperationsConsole({ section }: { section: Section }) {
   const [brandName, setBrandName] = useState("");
   const [brandDomain, setBrandDomain] = useState("");
   const [brandKeywords, setBrandKeywords] = useState("");
+  const [managedBrandId, setManagedBrandId] = useState<string | null>(null);
+  const [officialAssets, setOfficialAssets] = useState<OfficialAsset[]>([]);
+  const [assetType, setAssetType] = useState<OfficialAsset["asset_type"]>("domain");
+  const [assetValue, setAssetValue] = useState("");
+  const [archiveRationale, setArchiveRationale] = useState("");
   const [analystName, setAnalystName] = useState("");
   const [analystEmail, setAnalystEmail] = useState("");
   const [analystRole, setAnalystRole] = useState("analyst");
@@ -76,6 +82,51 @@ export function OperationsConsole({ section }: { section: Section }) {
       const body = await response.json(); if (!response.ok) throw new Error(body.error ?? "Brand creation failed");
       setBrands((current) => [...current, body.brand].sort((left, right) => left.name.localeCompare(right.name))); setBrandName(""); setBrandDomain(""); setBrandKeywords(""); setShowCreate(false); setFeedback("Protected brand enrolled.");
     } catch (error) { setFeedback(error instanceof Error ? error.message : "Brand creation failed"); } finally { setBusy(false); }
+  }
+
+  async function manageBrand(brand: Brand) {
+    if (managedBrandId === brand.id) { setManagedBrandId(null); setOfficialAssets([]); return; }
+    setBusy(true); setFeedback(null);
+    try {
+      const response = await fetch(`/api/brands/${encodeURIComponent(brand.id)}/assets`, { cache: "no-store" });
+      const body = await response.json();
+      if (!response.ok || body.mode !== "live") throw new Error(body.error ?? "Whitelist is unavailable while the API is offline");
+      setManagedBrandId(brand.id); setOfficialAssets(body.assets ?? []); setAssetValue(""); setArchiveRationale("");
+    } catch (error) { setFeedback(error instanceof Error ? error.message : "Whitelist loading failed"); } finally { setBusy(false); }
+  }
+
+  async function addOfficialAsset(brand: Brand) {
+    if (!assetValue.trim()) return;
+    setBusy(true); setFeedback(null);
+    try {
+      const response = await fetch(`/api/brands/${encodeURIComponent(brand.id)}/assets`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ asset_type: assetType, value: assetValue.trim() }) });
+      const body = await response.json(); if (!response.ok) throw new Error(body.error ?? "Whitelist update failed");
+      setOfficialAssets((current) => [...current, body.asset].sort((left, right) => left.value.localeCompare(right.value)));
+      setBrands((current) => current.map((item) => item.id === brand.id ? { ...item, official_domains: [...item.official_domains, body.asset.value].sort() } : item));
+      setAssetValue(""); setFeedback(`${body.asset.value} added to ${brand.name}'s whitelist.`);
+    } catch (error) { setFeedback(error instanceof Error ? error.message : "Whitelist update failed"); } finally { setBusy(false); }
+  }
+
+  async function removeOfficialAsset(brand: Brand, asset: OfficialAsset) {
+    setBusy(true); setFeedback(null);
+    try {
+      const response = await fetch(`/api/brands/${encodeURIComponent(brand.id)}/assets/${encodeURIComponent(asset.id)}`, { method: "DELETE" });
+      if (!response.ok) { const body = await response.json(); throw new Error(body.error ?? "Whitelist update failed"); }
+      setOfficialAssets((current) => current.filter((item) => item.id !== asset.id));
+      setBrands((current) => current.map((item) => item.id === brand.id ? { ...item, official_domains: item.official_domains.filter((value) => value !== asset.value) } : item));
+      setFeedback(`${asset.value} removed from ${brand.name}'s whitelist.`);
+    } catch (error) { setFeedback(error instanceof Error ? error.message : "Whitelist update failed"); } finally { setBusy(false); }
+  }
+
+  async function archiveBrand(brand: Brand) {
+    if (archiveRationale.trim().length < 5) { setFeedback("Add a short archive rationale before removing the brand."); return; }
+    setBusy(true); setFeedback(null);
+    try {
+      const response = await fetch(`/api/brands/${encodeURIComponent(brand.id)}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rationale: archiveRationale.trim() }) });
+      if (!response.ok) { const body = await response.json(); throw new Error(body.error ?? "Brand archive failed"); }
+      setBrands((current) => current.filter((item) => item.id !== brand.id)); setManagedBrandId(null); setOfficialAssets([]); setArchiveRationale("");
+      setFeedback(`${brand.name} archived. Existing incidents and evidence were preserved.`);
+    } catch (error) { setFeedback(error instanceof Error ? error.message : "Brand archive failed"); } finally { setBusy(false); }
   }
 
   async function toggleConnector(connector: Connector) {
@@ -118,7 +169,20 @@ export function OperationsConsole({ section }: { section: Section }) {
       <header className="ops-header"><div><p className="eyebrow">{META[section].eyebrow}</p><h1>{META[section].title}</h1><p>{META[section].description}</p></div>{(section === "brands" || section === "team") && <button className="primary-button" onClick={() => setShowCreate((value) => !value)}>+ {section === "brands" ? "Enroll brand" : "Add analyst"}</button>}</header>
       {feedback && <div className="ops-feedback" role="status">{feedback}</div>}
       {loading ? <div className="ops-loading">Loading operational data…</div> : <>
-        {section === "brands" && <section className="ops-panel"><div className="ops-panel-head"><div><h2>Monitoring portfolio</h2><p>{brands.filter((item) => item.monitoring_enabled).length} of {brands.length} brands actively monitored</p></div></div>{showCreate && <div className="ops-create-grid"><label>Company or brand<input value={brandName} onChange={(event) => setBrandName(event.target.value)} placeholder="Company name" /></label><label>Official domain<input value={brandDomain} onChange={(event) => setBrandDomain(event.target.value)} placeholder="company.example" /></label><label>Keywords<input value={brandKeywords} onChange={(event) => setBrandKeywords(event.target.value)} placeholder="login, delivery, support" /></label><button className="primary-button" disabled={busy || brandName.trim().length < 2 || !brandDomain.trim()} onClick={createBrand}>Enroll</button></div>}<div className="ops-list">{brands.map((brand) => <article key={brand.id}><span className="company-mark sage">{initials(brand.name)}</span><div><strong>{brand.name}</strong><span>{brand.official_domains.join(", ")}</span><small>{brand.keywords.length ? `${brand.keywords.length} monitored keywords` : "Default detection vocabulary"}</small></div><span className={`ops-state ${brand.monitoring_enabled ? "state-good" : "state-muted"}`}>{brand.monitoring_enabled ? "Monitoring" : "Paused"}</span><button className="secondary-button" disabled={busy} onClick={() => toggleBrand(brand)}>{brand.monitoring_enabled ? "Pause" : "Resume"}</button></article>)}</div></section>}
+        {section === "brands" && <section className="ops-panel">
+          <div className="ops-panel-head"><div><h2>Monitoring portfolio</h2><p>{brands.filter((item) => item.monitoring_enabled).length} of {brands.length} brands actively monitored</p></div></div>
+          {showCreate && <div className="ops-create-grid"><label>Company or brand<input value={brandName} onChange={(event) => setBrandName(event.target.value)} placeholder="Company name" /></label><label>Official domain<input value={brandDomain} onChange={(event) => setBrandDomain(event.target.value)} placeholder="company.example" /></label><label>Keywords<input value={brandKeywords} onChange={(event) => setBrandKeywords(event.target.value)} placeholder="login, delivery, support" /></label><button className="primary-button" disabled={busy || brandName.trim().length < 2 || !brandDomain.trim()} onClick={createBrand}>Enroll</button></div>}
+          <div className="brand-list">{brands.map((brand) => <article className={`brand-card ${managedBrandId === brand.id ? "brand-card-open" : ""}`} key={brand.id}>
+            <div className="brand-row"><span className="company-mark sage">{initials(brand.name)}</span><div className="brand-summary"><strong>{brand.name}</strong><span>{brand.official_domains.join(", ")}</span><small>{brand.keywords.length ? `${brand.keywords.length} monitored keywords` : "Default detection vocabulary"}</small></div><span className={`ops-state ${brand.monitoring_enabled ? "state-good" : "state-muted"}`}>{brand.monitoring_enabled ? "Monitoring" : "Paused"}</span><button className="secondary-button" disabled={busy} onClick={() => toggleBrand(brand)}>{brand.monitoring_enabled ? "Pause" : "Resume"}</button><button className="secondary-button" disabled={busy} onClick={() => manageBrand(brand)}>{managedBrandId === brand.id ? "Close" : "Manage whitelist"}</button></div>
+            {managedBrandId === brand.id && <div className="brand-manager">
+              <div className="whitelist-heading"><div><h3>Trusted domains and subdomains</h3><p>Matching assets are suppressed before an incident is created.</p></div><span>{officialAssets.length} assets</span></div>
+              <div className="asset-help"><p><strong>Domain</strong> trusts the base domain and every child host.</p><p><strong>Subdomain</strong> trusts that host and its descendants.</p><p><strong>Wildcard</strong> trusts descendants only, not the base domain.</p></div>
+              <div className="asset-list">{officialAssets.map((asset) => <div key={asset.id}><span className={`asset-kind asset-${asset.asset_type}`}>{asset.asset_type}</span><code>{asset.value}</code><small>Added by {asset.created_by}</small><button className="text-danger-button" disabled={busy || officialAssets.length <= 1} title={officialAssets.length <= 1 ? "A brand must retain one official asset" : `Remove ${asset.value}`} onClick={() => removeOfficialAsset(brand, asset)}>Remove</button></div>)}</div>
+              <div className="asset-add"><label>Asset type<select value={assetType} onChange={(event) => setAssetType(event.target.value as OfficialAsset["asset_type"])}><option value="domain">Domain</option><option value="subdomain">Subdomain</option><option value="wildcard">Wildcard subdomains</option></select></label><label>Domain or subdomain<input value={assetValue} onChange={(event) => setAssetValue(event.target.value)} placeholder={assetType === "wildcard" ? "*.service.example" : "service.example"} /></label><button className="primary-button" disabled={busy || !assetValue.trim()} onClick={() => addOfficialAsset(brand)}>Add to whitelist</button></div>
+              {me?.role === "administrator" && <div className="archive-zone"><div><strong>Remove protected brand</strong><p>Archives monitoring configuration while preserving all cases, evidence, and audit history.</p></div><input aria-label={`Archive rationale for ${brand.name}`} value={archiveRationale} onChange={(event) => setArchiveRationale(event.target.value)} placeholder="Reason for removing this brand" /><button className="danger-button" disabled={busy || archiveRationale.trim().length < 5} onClick={() => archiveBrand(brand)}>Archive brand</button></div>}
+            </div>}
+          </article>)}</div>
+        </section>}
 
         {section === "discovery" && <><section className="ops-metrics">{[["Observations", summary?.observations ?? 0], ["Candidates", summary?.candidates ?? 0], ["Open incidents", summary?.open_incidents ?? 0], ["Evidence items", summary?.evidence_items ?? 0]].map(([label, value]) => <article key={String(label)}><span>{label}</span><strong>{compact(Number(value))}</strong></article>)}</section><section className="ops-grid"><article className="ops-panel"><div className="ops-panel-head"><div><h2>Source connectors</h2><p>{activeConnectors} of {connectors.length} enabled</p></div></div><div className="ops-list connector-list">{connectors.map((connector) => <article key={connector.id}><span className="source-icon">{connector.type[0].toUpperCase()}</span><div><strong>{humanize(connector.type)}</strong><span>{compact(connector.observations_seen)} retained observations · Last success {formatDate(connector.last_success_at)}</span>{connector.last_error && <small className="ops-error">{connector.last_error}</small>}</div><span className={`ops-state ${connector.status === "healthy" ? "state-good" : connector.enabled ? "state-warn" : "state-muted"}`}>{humanize(connector.status)}</span><button className="secondary-button" disabled={busy} onClick={() => toggleConnector(connector)}>{connector.enabled ? "Disable" : "Enable"}</button></article>)}</div></article><aside className="ops-panel job-panel"><div className="ops-panel-head"><div><h2>Worker and jobs</h2><p>Durable background execution</p></div></div><dl><div><dt>Worker state</dt><dd>{humanize(summary?.worker.status ?? "unavailable")}</dd></div><div><dt>Completed cycles</dt><dd>{summary?.worker.cycle_count ?? 0}</dd></div><div><dt>Last completed</dt><dd>{formatDate(summary?.worker.last_cycle_completed_at ?? null)}</dd></div>{Object.entries(summary?.jobs ?? {}).map(([status, count]) => <div key={status}><dt>{humanize(status)} jobs</dt><dd>{count}</dd></div>)}</dl></aside></section></>}
 
