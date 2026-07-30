@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 
 class BrandCreate(BaseModel):
@@ -129,6 +129,31 @@ class IncidentNoteView(BaseModel):
     author_name: str
     body: str
     created_at: datetime
+
+
+class DomainContextOverrideUpdate(BaseModel):
+    hosting_provider_name: str | None = Field(default=None, max_length=200)
+    hosting_provider_contact: str | None = Field(default=None, max_length=500)
+    registrar_name: str | None = Field(default=None, max_length=200)
+    registrar_contact: str | None = Field(default=None, max_length=500)
+    rationale: str = Field(min_length=5, max_length=2000)
+    clear: bool = False
+
+    @field_validator("hosting_provider_contact", "registrar_contact")
+    @classmethod
+    def safe_contact(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        normalized = value.strip()
+        if normalized.startswith("https://") or ("@" in normalized and " " not in normalized and ":" not in normalized):
+            return normalized
+        raise ValueError("Contact must be an HTTPS URL or email address")
+
+    @model_validator(mode="after")
+    def attribution_or_clear_required(self):
+        if not self.clear and not any((self.hosting_provider_name, self.hosting_provider_contact, self.registrar_name, self.registrar_contact)):
+            raise ValueError("At least one provider or registrar value is required")
+        return self
 
 
 class ContributionView(BaseModel):

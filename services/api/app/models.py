@@ -159,6 +159,23 @@ class IncidentNote(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class DomainContextOverride(Base):
+    __tablename__ = "incident_domain_context_overrides"
+    __table_args__ = (UniqueConstraint("tenant_id", "incident_id", name="uq_domain_context_override_incident"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id"), nullable=False, index=True)
+    hosting_provider_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    hosting_provider_contact: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    registrar_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    registrar_contact: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_by_email: Mapped[str] = mapped_column(String(254), nullable=False)
+    updated_by_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class ScoreContribution(Base):
     __tablename__ = "score_contributions"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)

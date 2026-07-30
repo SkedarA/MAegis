@@ -61,6 +61,15 @@ test("account and domain-context routes fail closed without a private API", asyn
   assert.deepEqual(await context.json(), { context: null });
 });
 
+test("domain-context overrides fail closed without the private API", async () => {
+  const response = await request("/api/incidents/demo/context", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ hosting_provider_name: "Verified Host", rationale: "Analyst verified provider" }),
+  });
+  assert.equal(response.status, 409);
+});
+
 test("manual analysis is read-only when the operational API is absent", async () => {
   const brands = await request("/api/brands");
   assert.deepEqual(await brands.json(), { mode: "demo", brands: [] });

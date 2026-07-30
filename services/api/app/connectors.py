@@ -171,6 +171,9 @@ class URLScanConnector(Connector):
                     "page_domain": page.get("domain"),
                     "page_title": page.get("title"),
                     "page_ip": page.get("ip"),
+                    "page_asn": page.get("asn"),
+                    "page_asnname": page.get("asnname"),
+                    "page_country": page.get("country"),
                     "observed_at": task.get("time"),
                     "verdicts": row.get("verdicts") or {},
                 }

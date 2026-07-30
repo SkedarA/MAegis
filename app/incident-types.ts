@@ -49,8 +49,9 @@ export type DomainContext = {
   domain_type: "platform_tenant" | "registered_domain";
   registrable_domain: string;
   platform_suffix: string | null;
-  hosting_provider: { name: string | null; contact: string | null };
-  registrar: { name: string | null; contact: string | null };
+  hosting_provider: { name: string | null; contact: string | null; source: string; confidence: string; evidence: string | null };
+  registrar: { name: string | null; contact: string | null; source: string; confidence: string; evidence: string | null };
   registration_date: string | null;
   registration_relevant: boolean;
+  override: { active: boolean; updated_by: string | null; updated_at: string | null; rationale: string | null };
 };

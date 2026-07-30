@@ -38,6 +38,9 @@ class FakeResponse:
                         "domain": "tracking.fancourier-ro.lol",
                         "title": "Verify",
                         "ip": "47.79.98.250",
+                        "asn": "AS13335",
+                        "asnname": "CLOUDFLARENET",
+                        "country": "US",
                     },
                     "verdicts": {"overall": {"malicious": False, "score": 0}},
                 }
@@ -71,6 +74,7 @@ class URLScanConnectorTests(unittest.IsolatedAsyncioTestCase):
             ["fancourier-ro.tracking-portal.click", "tracking.fancourier-ro.lol"],
         )
         self.assertTrue(all(item.payload["scan_url"].startswith("https://urlscan.io/result/") for item in observations))
+        self.assertTrue(all(item.payload["page_asnname"] == "CLOUDFLARENET" for item in observations))
         replay, _ = await connector.fetch("fancourier", checkpoint)
         self.assertEqual(replay, [])
 

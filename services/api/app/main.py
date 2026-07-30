@@ -13,9 +13,9 @@ from .config import get_settings
 from .database import Base, engine, get_db
 from .detection import DETECTOR_VERSION, analyze_domain, canonical_brand, normalize_domain
 from .domain_context import build_domain_context
-from .models import AnalystAccount, AuditEvent, BackgroundJob, Candidate, EvidenceItem, Incident, IncidentNote, IncidentStatus, Observation, ProtectedBrand, ScoreContribution, Severity, SourceConnector, WorkerHeartbeat
+from .models import AnalystAccount, AuditEvent, BackgroundJob, Candidate, DomainContextOverride, EvidenceItem, Incident, IncidentNote, IncidentStatus, Observation, ProtectedBrand, ScoreContribution, Severity, SourceConnector, WorkerHeartbeat
 from .runtime_health import worker_is_fresh
-from .schemas import AIAnalysisView, AnalystCreate, AnalystUpdate, AnalystView, AssignmentUpdate, AuditEventView, BrandCreate, BrandUpdate, BrandView, CatalogBrandView, CatalogEnrollmentCreate, CatalogEnrollmentView, ConnectorUpdate, EvidenceView, IncidentNoteCreate, IncidentNoteView, IncidentView, SubmissionCreate, TriageUpdate
+from .schemas import AIAnalysisView, AnalystCreate, AnalystUpdate, AnalystView, AssignmentUpdate, AuditEventView, BrandCreate, BrandUpdate, BrandView, CatalogBrandView, CatalogEnrollmentCreate, CatalogEnrollmentView, ConnectorUpdate, DomainContextOverrideUpdate, EvidenceView, IncidentNoteCreate, IncidentNoteView, IncidentView, SubmissionCreate, TriageUpdate
 from .scoring import score_signals
 from .security import Principal, require_administrator, require_analyst, require_principal
 
@@ -318,11 +318,61 @@ def incident_case_context(incident_id: str, db: Session = Depends(get_db), princ
     incident = db.scalar(select(Incident).where(Incident.id == incident_id, Incident.tenant_id == principal.tenant_id))
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
-    evidence = list(db.scalars(select(EvidenceItem).where(EvidenceItem.incident_id == incident.id, EvidenceItem.tenant_id == principal.tenant_id)))
-    return build_domain_context(
-        incident.domain,
-        [{"evidence_type": item.evidence_type, "payload": item.payload} for item in evidence],
-    )
+    return build_incident_domain_context(db, incident, principal.tenant_id)
+
+
+def build_incident_domain_context(db: Session, incident: Incident, tenant_id: str) -> dict:
+    evidence = list(db.scalars(select(EvidenceItem).where(EvidenceItem.incident_id == incident.id, EvidenceItem.tenant_id == tenant_id).order_by(EvidenceItem.collected_at, EvidenceItem.id)))
+    override = db.scalar(select(DomainContextOverride).where(DomainContextOverride.incident_id == incident.id, DomainContextOverride.tenant_id == tenant_id))
+    override_payload = None if override is None else {
+        "hosting_provider_name": override.hosting_provider_name,
+        "hosting_provider_contact": override.hosting_provider_contact,
+        "registrar_name": override.registrar_name,
+        "registrar_contact": override.registrar_contact,
+        "rationale": override.rationale,
+        "updated_by": override.updated_by_name or override.updated_by_email,
+        "updated_at": override.updated_at.isoformat(),
+    }
+    return build_domain_context(incident.domain, [{"evidence_type": item.evidence_type, "payload": item.payload} for item in evidence], override_payload)
+
+
+@app.put("/api/v1/incidents/{incident_id}/case-context/override")
+def update_incident_domain_context(
+    incident_id: str,
+    payload: DomainContextOverrideUpdate,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require_principal),
+) -> dict:
+    require_analyst(principal)
+    incident = db.scalar(select(Incident).where(Incident.id == incident_id, Incident.tenant_id == principal.tenant_id))
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    override = db.scalar(select(DomainContextOverride).where(DomainContextOverride.incident_id == incident.id, DomainContextOverride.tenant_id == principal.tenant_id))
+    before = None if override is None else {
+        "hosting_provider_name": override.hosting_provider_name,
+        "hosting_provider_contact": override.hosting_provider_contact,
+        "registrar_name": override.registrar_name,
+        "registrar_contact": override.registrar_contact,
+    }
+    if payload.clear:
+        if override:
+            db.delete(override)
+        audit(db, principal, "domain_context.override_cleared", "incident", incident.id, {"before": before, "rationale": payload.rationale})
+    else:
+        if override is None:
+            override = DomainContextOverride(tenant_id=principal.tenant_id, incident_id=incident.id, rationale=payload.rationale, updated_by_email=principal.email, updated_by_name=principal.display_name)
+            db.add(override)
+        override.hosting_provider_name = payload.hosting_provider_name.strip() if payload.hosting_provider_name else None
+        override.hosting_provider_contact = payload.hosting_provider_contact.strip() if payload.hosting_provider_contact else None
+        override.registrar_name = payload.registrar_name.strip() if payload.registrar_name else None
+        override.registrar_contact = payload.registrar_contact.strip() if payload.registrar_contact else None
+        override.rationale = payload.rationale.strip()
+        override.updated_by_email = principal.email
+        override.updated_by_name = principal.display_name
+        override.updated_at = datetime.now(timezone.utc)
+        audit(db, principal, "domain_context.override_updated", "incident", incident.id, {"before": before, "after": {"hosting_provider_name": override.hosting_provider_name, "hosting_provider_contact": override.hosting_provider_contact, "registrar_name": override.registrar_name, "registrar_contact": override.registrar_contact}, "rationale": override.rationale})
+    db.commit()
+    return build_incident_domain_context(db, incident, principal.tenant_id)
 
 
 @app.post("/api/v1/incidents/{incident_id}/assign", response_model=IncidentView)

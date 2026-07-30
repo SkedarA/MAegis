@@ -17,6 +17,13 @@ function safeUrl(value: unknown) {
   try { const url = new URL(value); return url.protocol === "https:" ? url.toString() : null; } catch { return null; }
 }
 
+function contactHref(value: string | null | undefined) {
+  if (!value) return null;
+  if (value.startsWith("https://")) return value;
+  if (value.includes("@") && !value.includes(" ") && !value.includes(":")) return `mailto:${value}`;
+  return null;
+}
+
 function evidenceSummary(item: EvidenceItem) {
   if (item.evidenceType === "Dns") {
     const records = item.payload.records as Record<string, unknown[]> | undefined;
@@ -43,6 +50,12 @@ export function CaseWorkspace({ incidentId }: { incidentId: string }) {
   const [showAddAnalyst, setShowAddAnalyst] = useState(false);
   const [newAnalystName, setNewAnalystName] = useState("");
   const [newAnalystEmail, setNewAnalystEmail] = useState("");
+  const [showInfrastructureEdit, setShowInfrastructureEdit] = useState(false);
+  const [hostingProviderName, setHostingProviderName] = useState("");
+  const [hostingProviderContact, setHostingProviderContact] = useState("");
+  const [registrarName, setRegistrarName] = useState("");
+  const [registrarContact, setRegistrarContact] = useState("");
+  const [infrastructureRationale, setInfrastructureRationale] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
   const [feedbackKind, setFeedbackKind] = useState<"success" | "error">("success");
   const [busy, setBusy] = useState(false);
@@ -62,7 +75,12 @@ export function CaseWorkspace({ incidentId }: { incidentId: string }) {
       setStatus(incidentBody.incident.status.toLowerCase().replaceAll(" ", "_") === "new" ? "investigating" : incidentBody.incident.status.toLowerCase().replaceAll(" ", "_"));
       setSeverity(incidentBody.incident.severity.toLowerCase());
       setEvidence(evidenceBody.evidence ?? []);
-      setContext(contextBody.context ?? null);
+      const loadedContext = contextBody.context ?? null;
+      setContext(loadedContext);
+      setHostingProviderName(loadedContext?.hosting_provider.name ?? "");
+      setHostingProviderContact(loadedContext?.hosting_provider.contact ?? "");
+      setRegistrarName(loadedContext?.registrar.name ?? "");
+      setRegistrarContact(loadedContext?.registrar.contact ?? "");
       setMe(accountBody.me ?? null);
       setAnalysts(accountBody.analysts ?? []);
       setSelectedAnalyst(accountBody.me?.id ?? "");
@@ -136,6 +154,36 @@ export function CaseWorkspace({ incidentId }: { incidentId: string }) {
     finally { setBusy(false); }
   }
 
+  async function saveInfrastructureOverride(clear = false) {
+    if (!clear && infrastructureRationale.trim().length < 5) return;
+    setBusy(true); setFeedback(null); setFeedbackKind("success");
+    try {
+      const response = await fetch(`/api/incidents/${encodeURIComponent(incidentId)}/context`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          hosting_provider_name: hostingProviderName.trim() || null,
+          hosting_provider_contact: hostingProviderContact.trim() || null,
+          registrar_name: registrarName.trim() || null,
+          registrar_contact: registrarContact.trim() || null,
+          rationale: clear ? "Analyst restored automatic infrastructure attribution." : infrastructureRationale.trim(),
+          clear,
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Infrastructure update failed");
+      const updated = body.context as DomainContext;
+      setContext(updated);
+      setHostingProviderName(updated.hosting_provider.name ?? "");
+      setHostingProviderContact(updated.hosting_provider.contact ?? "");
+      setRegistrarName(updated.registrar.name ?? "");
+      setRegistrarContact(updated.registrar.contact ?? "");
+      setInfrastructureRationale(""); setShowInfrastructureEdit(false);
+      setFeedback(clear ? "Automatic infrastructure attribution restored." : "Infrastructure attribution saved and audited.");
+    } catch (error) { setFeedbackKind("error"); setFeedback(error instanceof Error ? error.message : "Infrastructure update failed"); }
+    finally { setBusy(false); }
+  }
+
   if (loading) return <main className="case-loading">Preparing analyst workspace…</main>;
   if (!incident) return <main className="case-loading"><strong>Case unavailable</strong><span>{feedback}</span><Link href="/">Return to queue</Link></main>;
 
@@ -167,7 +215,27 @@ export function CaseWorkspace({ incidentId }: { incidentId: string }) {
       <aside className="case-side">
         <article className="case-card assignment-card"><div className="case-card-head"><div><span>Ownership</span><h2>Assignment</h2></div><button className="text-button" onClick={() => setShowAddAnalyst((value) => !value)}>+ Add analyst</button></div><div className="assigned-line"><span className="avatar">{(assignedAnalyst?.display_name ?? incident.assignedTo ?? "—").split(/[ @._-]/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</span><div><span>Current analyst</span><strong>{assignedAnalyst?.display_name ?? incident.assignedTo ?? "Unassigned"}</strong>{assignedAnalyst && <small>{assignedAnalyst.email}</small>}</div></div><button className="primary-button full" disabled={busy || !me || isAssignedToMe} onClick={() => me && assign(me.id)}>{isAssignedToMe ? "Assigned to you" : "Assign to me"}</button><div className="assign-other"><select aria-label="Assign another analyst" value={selectedAnalyst} onChange={(event) => setSelectedAnalyst(event.target.value)}><option value="">Select analyst…</option>{analysts.map((analyst) => <option key={analyst.id} value={analyst.id}>{analyst.display_name} · {titleCase(analyst.role)}</option>)}</select><button className="secondary-button" disabled={busy || !selectedAnalyst} onClick={() => assign(selectedAnalyst)}>Assign</button></div>{showAddAnalyst && <div className="add-analyst"><input value={newAnalystName} onChange={(event) => setNewAnalystName(event.target.value)} placeholder="Analyst name" maxLength={160} /><input value={newAnalystEmail} onChange={(event) => setNewAnalystEmail(event.target.value)} placeholder="analyst@example.com" maxLength={254} type="email" /><button className="secondary-button" disabled={busy || newAnalystName.trim().length < 2 || !newAnalystEmail.includes("@")} onClick={createAnalyst}>Create account</button></div>}</article>
 
-        <article className="case-card intelligence-card"><div className="case-card-head"><div><span>Infrastructure</span><h2>Domain intelligence</h2></div></div>{context?.domain_type === "platform_tenant" && <p className="platform-notice"><strong>Hosted platform tenant</strong>The abusive asset is the customer subdomain. Parent-domain age and registrar data are intentionally excluded.</p>}<dl><div><dt>Domain type</dt><dd>{context?.domain_type === "platform_tenant" ? "Hosted platform tenant" : "Registered domain"}</dd></div><div><dt>Effective registry target</dt><dd>{context?.registrable_domain ?? "Unknown"}</dd></div><div><dt>Hosting provider</dt><dd>{context?.hosting_provider.name ?? "Not identified"}{context?.hosting_provider.contact && <a href={context.hosting_provider.contact.startsWith("http") ? context.hosting_provider.contact : `mailto:${context.hosting_provider.contact}`}>Contact provider ↗</a>}</dd></div><div><dt>Registrar</dt><dd>{context?.registration_relevant ? context.registrar.name ?? "Not available" : "Not applicable to platform tenant"}{context?.registrar.contact && <a href={context.registrar.contact.startsWith("http") ? context.registrar.contact : `mailto:${context.registrar.contact}`}>Contact registrar ↗</a>}</dd></div><div><dt>Registration date</dt><dd>{context?.registration_relevant ? context.registration_date ? new Date(context.registration_date).toLocaleDateString("en-GB") : "Not available" : "Suppressed — platform registration is unrelated"}</dd></div></dl></article>
+        <article className="case-card intelligence-card">
+          <div className="case-card-head"><div><span>Infrastructure</span><h2>Domain intelligence</h2></div><button className="text-button" onClick={() => setShowInfrastructureEdit((value) => !value)}>{showInfrastructureEdit ? "Cancel" : "Edit attribution"}</button></div>
+          {context?.domain_type === "platform_tenant" && <p className="platform-notice"><strong>Hosted platform tenant</strong>The abusive asset is the customer subdomain. Parent-domain age and registrar data are intentionally excluded.</p>}
+          {context?.override.active && <p className="override-notice"><strong>Analyst override</strong>{context.override.updated_by ?? "Analyst"} · {context.override.updated_at ? new Date(context.override.updated_at).toLocaleString("en-GB") : "saved"}<span>{context.override.rationale}</span></p>}
+          <dl>
+            <div><dt>Domain type</dt><dd>{context?.domain_type === "platform_tenant" ? "Hosted platform tenant" : "Registered domain"}</dd></div>
+            <div><dt>Effective registry target</dt><dd>{context?.registrable_domain ?? "Unknown"}</dd></div>
+            <div><dt>Hosting provider</dt><dd>{context?.hosting_provider.name ?? "Not identified"}{contactHref(context?.hosting_provider.contact) && <a href={contactHref(context?.hosting_provider.contact) ?? undefined}>Contact provider ↗</a>}<small>{context ? `${titleCase(context.hosting_provider.source)} · ${titleCase(context.hosting_provider.confidence)} confidence` : "Awaiting evidence"}</small>{context?.hosting_provider.evidence && <em>{context.hosting_provider.evidence}</em>}</dd></div>
+            <div><dt>Registrar</dt><dd>{context?.registration_relevant ? context.registrar.name ?? "Not available" : "Not applicable to platform tenant"}{context?.registration_relevant && contactHref(context.registrar.contact) && <a href={contactHref(context.registrar.contact) ?? undefined}>Contact registrar ↗</a>}<small>{context?.registration_relevant ? `${titleCase(context.registrar.source)} · ${titleCase(context.registrar.confidence)} confidence` : "Platform registry intentionally excluded"}</small>{context?.registration_relevant && context.registrar.evidence && <em>{context.registrar.evidence}</em>}</dd></div>
+            <div><dt>Registration date</dt><dd>{context?.registration_relevant ? context.registration_date ? new Date(context.registration_date).toLocaleDateString("en-GB") : "Not available" : "Suppressed — platform registration is unrelated"}</dd></div>
+          </dl>
+          {showInfrastructureEdit && <div className="infrastructure-editor">
+            <p>Manual values replace automatic attribution and remain linked to your analyst identity.</p>
+            <label>Hosting provider<input value={hostingProviderName} onChange={(event) => setHostingProviderName(event.target.value)} maxLength={200} placeholder="Provider name" /></label>
+            <label>Provider contact<input value={hostingProviderContact} onChange={(event) => setHostingProviderContact(event.target.value)} maxLength={500} placeholder="Abuse email or https:// form" /></label>
+            <label>Registrar<input value={registrarName} onChange={(event) => setRegistrarName(event.target.value)} maxLength={200} disabled={!context?.registration_relevant} placeholder="Registrar name" /></label>
+            <label>Registrar contact<input value={registrarContact} onChange={(event) => setRegistrarContact(event.target.value)} maxLength={500} disabled={!context?.registration_relevant} placeholder="Abuse email or https:// form" /></label>
+            <label className="full-field">Override rationale<textarea value={infrastructureRationale} onChange={(event) => setInfrastructureRationale(event.target.value)} maxLength={2000} placeholder="Explain the evidence supporting this correction…" /></label>
+            <div className="infrastructure-actions">{context?.override.active && <button className="text-button danger-text" disabled={busy} onClick={() => saveInfrastructureOverride(true)}>Restore automatic</button>}<button className="primary-button" disabled={busy || infrastructureRationale.trim().length < 5 || (!hostingProviderName.trim() && !hostingProviderContact.trim() && !registrarName.trim() && !registrarContact.trim())} onClick={() => saveInfrastructureOverride(false)}>Save attribution</button></div>
+          </div>}
+        </article>
 
         <article className="case-card notes-card" id="notes"><div className="case-card-head"><div><span>Collaboration</span><h2>Analyst notes</h2></div><span>{notes.length}</span></div><div className="notes-list">{notes.length === 0 && <p>No analyst notes yet.</p>}{notes.map((note) => <div key={note.id}><strong>{note.author_name}</strong><time>{new Date(note.created_at).toLocaleString("en-GB")}</time><p>{note.body}</p></div>)}</div><textarea value={noteBody} onChange={(event) => setNoteBody(event.target.value)} maxLength={8000} placeholder="Add an evidence-based observation or handoff note…" /><div className="input-foot"><span>{noteBody.length}/8000</span><button className="secondary-button" disabled={busy || noteBody.trim().length < 2} onClick={addNote}>Add note</button></div></article>
 
