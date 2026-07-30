@@ -2,7 +2,7 @@
 
 MAegis is an operational brand-abuse monitoring SaaS that discovers suspicious domains, produces reproducible evidence and risk scores, and gives analysts a structured triage queue. It is designed as a master's thesis and public engineering portfolio without pretending that a solo deployment has commercial passive-DNS coverage.
 
-The separately bounded **Campaign Intelligence** module normalizes public DNS, TLS and registration evidence into a global infrastructure graph. Deterministic rules suppress generic shared-provider links, build campaign clusters only from strong relations, and calculate protected-brand relevance in tenant-scoped records. Global findings remain intelligence until they are relevant to a protected brand or explicitly promoted by an analyst.
+The separately bounded **Campaign Intelligence** module normalizes public DNS, TLS, URL behavior, content fingerprints and registration evidence into a global infrastructure graph. Its deterministic v2 clustering requires at least two independent evidence families, weights rare indicators more heavily, decays stale relationships and suppresses generic shared-provider hubs. The analyst console exposes cohesion and the score contributed by each evidence family. Protected-brand relevance remains tenant-scoped; global findings stay intelligence until they are relevant to a protected brand or explicitly promoted by an analyst.
 
 ![MAegis social preview](public/og.png)
 
@@ -139,4 +139,4 @@ CI additionally validates linting and container definitions.
 
 ## Roadmap
 
-The next implementation increments are DNS record enrichment, API-backed console mutations, full evidence timelines, campaign clustering, OIDC enforcement, OpenAI-compatible grounded analysis, analyst feedback capture, notifications, and signed evidence exports. Commercial passive DNS, Kafka, Kubernetes, and automated takedown are deliberately outside the initial milestone.
+The next implementation increments are deeper DNS history, page-structure hashing, campaign review actions, OIDC enforcement, grounded analyst-assistance experiments, analyst feedback capture and signed evidence exports. Commercial passive DNS, Kafka, Kubernetes, automated takedown and bulk screenshot retention are deliberately outside the initial milestone.

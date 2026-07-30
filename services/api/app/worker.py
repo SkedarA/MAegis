@@ -5,11 +5,12 @@ import os
 import socket
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from .brand_schedule import select_brand_batch_at_cursor
 from .candidate_schedule import brand_checkpoint, fetch_candidate_batch, prioritized_rotating_batch, with_brand_checkpoint
 from .campaign_intelligence.graph import ingest_incident_public_evidence
+from .campaign_intelligence.models import BrandCampaignRelevance, CampaignMember, IntelligenceCampaign
 from .connectors import CZDSZoneConnector, CertificateTransparencyConnector, DNSCandidateConnector, RDAPRegistrationConnector, URLhausConnector, URLScanConnector, fetch_rdap
 from .config import get_settings
 from .database import Base, SessionLocal, engine
@@ -458,7 +459,13 @@ def rescore_brand_incidents(db, job: BackgroundJob) -> None:
 
 
 def rebuild_intelligence(db, job: BackgroundJob) -> None:
-    incidents = list(db.scalars(select(Incident).where(Incident.tenant_id == job.tenant_id).limit(2000)))
+    # Membership and tenant relevance are derived data. Recompute them so stale
+    # relationships cannot leave a domain attached to an otherwise valid profile.
+    db.execute(delete(BrandCampaignRelevance))
+    db.execute(delete(CampaignMember))
+    for campaign in db.scalars(select(IntelligenceCampaign)):
+        campaign.classification = "superseded"
+    incidents = list(db.scalars(select(Incident).limit(10000)))
     relation_count = sum(ingest_incident_public_evidence(db, incident) for incident in incidents)
     job.payload = {**job.payload, "incidents_processed": len(incidents), "relations_processed": relation_count}
 

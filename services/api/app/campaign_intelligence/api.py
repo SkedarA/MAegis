@@ -17,7 +17,7 @@ def summary(db: Session = Depends(get_db), principal: Principal = Depends(requir
     return {
         "entities": db.scalar(select(func.count(InfrastructureEntity.id))) or 0,
         "relations": db.scalar(select(func.count(InfrastructureRelation.id))) or 0,
-        "campaigns": db.scalar(select(func.count(IntelligenceCampaign.id))) or 0,
+        "campaigns": db.scalar(select(func.count(IntelligenceCampaign.id)).where(IntelligenceCampaign.classification != "superseded")) or 0,
         "brand_relevant_campaigns": db.scalar(select(func.count()).select_from(relevant.subquery())) or 0,
         "patterns": len(PATTERN_CATALOG),
     }
@@ -30,7 +30,7 @@ def patterns(_: Principal = Depends(require_principal)) -> list[dict]:
 
 @router.get("/campaigns")
 def campaigns(limit: int = Query(default=100, ge=1, le=500), relevant_only: bool = False, db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> list[dict]:
-    statement = select(IntelligenceCampaign).order_by(IntelligenceCampaign.last_seen_at.desc()).limit(limit)
+    statement = select(IntelligenceCampaign).where(IntelligenceCampaign.classification != "superseded").order_by(IntelligenceCampaign.last_seen_at.desc()).limit(limit)
     if relevant_only:
         ids = select(BrandCampaignRelevance.campaign_id).where(BrandCampaignRelevance.tenant_id == principal.tenant_id, BrandCampaignRelevance.relevance >= .25)
         statement = statement.where(IntelligenceCampaign.id.in_(ids))
@@ -38,8 +38,9 @@ def campaigns(limit: int = Query(default=100, ge=1, le=500), relevant_only: bool
     output = []
     for campaign in rows:
         members = db.scalar(select(func.count(CampaignMember.id)).where(CampaignMember.campaign_id == campaign.id)) or 0
+        cohesion = db.scalar(select(func.avg(CampaignMember.campaign_confidence)).where(CampaignMember.campaign_id == campaign.id)) or 0
         relevance = db.scalar(select(func.max(BrandCampaignRelevance.relevance)).where(BrandCampaignRelevance.tenant_id == principal.tenant_id, BrandCampaignRelevance.campaign_id == campaign.id)) or 0
-        output.append({"id": campaign.id, "name": campaign.name, "classification": campaign.classification, "threat_confidence": campaign.threat_confidence, "brand_relevance": relevance, "summary": campaign.summary, "key_indicators": campaign.key_indicators, "member_count": members, "first_seen_at": campaign.first_seen_at, "last_seen_at": campaign.last_seen_at})
+        output.append({"id": campaign.id, "name": campaign.name, "classification": campaign.classification, "threat_confidence": campaign.threat_confidence, "brand_relevance": relevance, "summary": campaign.summary, "key_indicators": campaign.key_indicators, "independent_families": len(campaign.key_indicators or []), "cohesion": float(cohesion), "member_count": members, "first_seen_at": campaign.first_seen_at, "last_seen_at": campaign.last_seen_at})
     return output
 
 
