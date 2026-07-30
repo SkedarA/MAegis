@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 
 from ..detection import analyze_domain
 from ..models import EvidenceItem, Incident, ProtectedBrand
-from .fingerprints import normalize_url_template, url_hostname
+from .fingerprints import certificate_issuance_profile, domain_lure_template, normalize_url_template, page_structure_fingerprint, rdap_registration_profile, url_hostname
 from .models import BrandCampaignRelevance, CampaignMember, InfrastructureEntity, InfrastructureRelation, IntelligenceCampaign
 from .rules import relation_rule, score_direct_link
 
@@ -36,8 +36,12 @@ def _relate(db, source, target, kind: str, source_name: str, evidence_hash: str,
 def ingest_incident_public_evidence(db, incident: Incident) -> int:
     domain = _entity(db, "domain", incident.domain)
     domain.first_seen_at = min(domain.first_seen_at, incident.created_at)
+    brand_tokens = list(db.scalars(select(ProtectedBrand.canonical_name).where(ProtectedBrand.monitoring_enabled.is_(True))))
+    lure_template = domain_lure_template(incident.domain, brand_tokens)
+    if lure_template:
+        _relate(db, domain, _entity(db, "domain_template", lure_template), "uses_domain_template", "maegis", hashlib.sha256(lure_template.encode()).hexdigest(), incident.created_at)
     evidence = list(db.scalars(select(EvidenceItem).where(EvidenceItem.incident_id == incident.id)))
-    created = 0
+    created = 1 if lure_template else 0
     for item in evidence:
         payload = item.payload or {}
         if item.evidence_type == "dns":
@@ -50,15 +54,21 @@ def ingest_incident_public_evidence(db, incident: Incident) -> int:
             _relate(db, domain, certificate, "presents_certificate", item.source, item.raw_hash, item.collected_at); created += 1
             for san in payload.get("sans") or []:
                 _relate(db, certificate, _entity(db, "domain", san), "certificate_contains", item.source, item.raw_hash, item.collected_at); created += 1
+            certificate_profile = certificate_issuance_profile(payload)
+            if certificate_profile:
+                _relate(db, domain, _entity(db, "certificate_profile", certificate_profile), "shares_certificate_profile", item.source, item.raw_hash, item.collected_at); created += 1
         elif item.evidence_type == "rdap":
             registrar = payload.get("registrar")
             if not registrar:
                 registrar = next((entity.get("handle") for entity in payload.get("entities", []) if "registrar" in (entity.get("roles") or [])), None)
             if registrar:
                 _relate(db, domain, _entity(db, "registrar", str(registrar)), "registered_by", item.source, item.raw_hash, item.collected_at); created += 1
+            registration_profile = rdap_registration_profile(payload)
+            if registration_profile:
+                _relate(db, domain, _entity(db, "registration_profile", registration_profile), "shares_registration_profile", item.source, item.raw_hash, item.collected_at); created += 1
         elif item.evidence_type == "threat_feed":
             domain.attributes = {**(domain.attributes or {}), "threat_sources": sorted(set([*(domain.attributes or {}).get("threat_sources", []), item.source]))}
-        elif item.evidence_type == "source_observation":
+        elif item.evidence_type in {"source_observation", "website_capture", "capture"}:
             if payload.get("page_ip"):
                 _relate(db, domain, _entity(db, "ip", str(payload["page_ip"])), "resolves_to", item.source, item.raw_hash, item.collected_at); created += 1
             if payload.get("page_asn"):
@@ -72,6 +82,9 @@ def ingest_incident_public_evidence(db, incident: Incident) -> int:
                 _relate(db, domain, _entity(db, "domain", effective_host), "redirects_to", item.source, item.raw_hash, item.collected_at); created += 1
             if payload.get("favicon_hash"):
                 _relate(db, domain, _entity(db, "favicon", str(payload["favicon_hash"])), "shares_favicon", item.source, item.raw_hash, item.collected_at); created += 1
+            structure = page_structure_fingerprint(payload)
+            if structure:
+                _relate(db, domain, _entity(db, "page_structure", structure), "shares_structure", item.source, item.raw_hash, item.collected_at); created += 1
     db.flush(); rebuild_campaigns_for_domain(db, domain)
     return created
 

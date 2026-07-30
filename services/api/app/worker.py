@@ -11,6 +11,7 @@ from .brand_schedule import select_brand_batch_at_cursor
 from .candidate_schedule import brand_checkpoint, fetch_candidate_batch, prioritized_rotating_batch, with_brand_checkpoint
 from .campaign_intelligence.graph import ingest_incident_public_evidence
 from .campaign_intelligence.models import BrandCampaignRelevance, CampaignMember, IntelligenceCampaign
+from .campaign_intelligence.promotion import promote_campaign_members
 from .connectors import CZDSZoneConnector, CertificateTransparencyConnector, DNSCandidateConnector, RDAPRegistrationConnector, URLhausConnector, URLScanConnector, fetch_rdap
 from .config import get_settings
 from .database import Base, SessionLocal, engine
@@ -467,7 +468,16 @@ def rebuild_intelligence(db, job: BackgroundJob) -> None:
         campaign.classification = "superseded"
     incidents = list(db.scalars(select(Incident).limit(10000)))
     relation_count = sum(ingest_incident_public_evidence(db, incident) for incident in incidents)
-    job.payload = {**job.payload, "incidents_processed": len(incidents), "relations_processed": relation_count}
+    promoted = 0
+    campaign_tenants = db.execute(
+        select(IntelligenceCampaign, BrandCampaignRelevance.tenant_id)
+        .join(BrandCampaignRelevance, BrandCampaignRelevance.campaign_id == IntelligenceCampaign.id)
+        .where(IntelligenceCampaign.classification != "superseded")
+        .distinct()
+    ).all()
+    for campaign, tenant_id in campaign_tenants:
+        promoted += len(promote_campaign_members(db, campaign, tenant_id, "worker:campaign-intelligence", automatic=True))
+    job.payload = {**job.payload, "incidents_processed": len(incidents), "relations_processed": relation_count, "incidents_promoted": promoted}
 
 
 def add_evidence(db, job: BackgroundJob, evidence_type: str, source: str, payload: dict) -> None:

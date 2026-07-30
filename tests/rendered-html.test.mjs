@@ -162,6 +162,15 @@ test("operational console routes render their dedicated workspaces", async () =>
   }
 });
 
+test("campaign investigation workspace and safe promotion proxy are present", async () => {
+  const page = await readFile(new URL("../app/campaign-workspace.tsx", import.meta.url), "utf8");
+  const route = await readFile(new URL("../app/api/intelligence/[id]/route.ts", import.meta.url), "utf8");
+  assert.match(page, /Deterministic campaign investigation/);
+  assert.match(page, /Promote selected/);
+  assert.match(page, /correlation facts, not a malicious verdict/i);
+  assert.match(route, /campaigns\/\$\{encodeURIComponent\(id\)\}/);
+});
+
 test("main dashboard contains portfolio filters and client analytics", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.match(page, /Filter the complete dashboard/);

@@ -2,7 +2,7 @@
 
 MAegis is an operational brand-abuse monitoring SaaS that discovers suspicious domains, produces reproducible evidence and risk scores, and gives analysts a structured triage queue. It is designed as a master's thesis and public engineering portfolio without pretending that a solo deployment has commercial passive-DNS coverage.
 
-The separately bounded **Campaign Intelligence** module normalizes public DNS, TLS, URL behavior, content fingerprints and registration evidence into a global infrastructure graph. Its deterministic v2 clustering requires at least two independent evidence families, weights rare indicators more heavily, decays stale relationships and suppresses generic shared-provider hubs. The analyst console exposes cohesion and the score contributed by each evidence family. Protected-brand relevance remains tenant-scoped; global findings stay intelligence until they are relevant to a protected brand or explicitly promoted by an analyst.
+The separately bounded **Campaign Intelligence** module normalizes public DNS, TLS, URL behavior, compact page-structure fingerprints and registration-batch evidence into a global infrastructure graph. Its deterministic v2 clustering requires at least two independent evidence families, weights rare indicators more heavily, decays stale relationships and suppresses generic shared-provider hubs. It can abstract protected-brand names from lure-domain templates to recognize one kit targeting multiple firms. The analyst console exposes cohesion and evidence-family scores, while a dedicated investigation workspace supports tenant-scoped assignment, rationale, monitoring, dismissal and safe promotion into the incident queue. Screenshots remain opt-in; compact structure and form fingerprints provide correlation without bulk image retention.
 
 ![MAegis social preview](public/og.png)
 
@@ -139,4 +139,4 @@ CI additionally validates linting and container definitions.
 
 ## Roadmap
 
-The next implementation increments are deeper DNS history, page-structure hashing, campaign review actions, OIDC enforcement, grounded analyst-assistance experiments, analyst feedback capture and signed evidence exports. Commercial passive DNS, Kafka, Kubernetes, automated takedown and bulk screenshot retention are deliberately outside the initial milestone.
+The next implementation increments are deeper DNS history, analyst-assisted campaign merge/split controls, OIDC enforcement, grounded analyst-assistance experiments, threshold-calibration reports and signed evidence exports. Commercial passive DNS, Kafka, Kubernetes, automated takedown and bulk screenshot retention are deliberately outside the initial milestone.

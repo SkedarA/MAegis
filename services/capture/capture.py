@@ -44,7 +44,7 @@ async def validate_request(route, counter: list[int]) -> None:
     await route.continue_()
 
 
-async def capture(url: str, output_dir: Path) -> dict:
+async def capture(url: str, output_dir: Path, screenshot_enabled: bool = False) -> dict:
     from playwright.async_api import async_playwright
 
     validate_target(url)
@@ -61,12 +61,15 @@ async def capture(url: str, output_dir: Path) -> dict:
         validate_target(final_url)
         title = (await page.title())[:500]
         visible_text = (await page.locator("body").inner_text(timeout=5_000))[:MAX_BODY_BYTES]
-        forms = await page.locator("form").count()
+        forms = await page.eval_on_selector_all("form", "forms => forms.slice(0, 20).map(form => ({ method: (form.method || 'get').toLowerCase(), action: form.action || '', input_types: Array.from(form.querySelectorAll('input')).map(input => (input.type || 'text').toLowerCase()).sort() }))")
         password_fields = await page.locator('input[type="password"]').count()
         payment_fields = await page.locator('input[autocomplete*="cc-"]').count()
         external_domains = sorted(set(await page.eval_on_selector_all("[src],[href]", "els => els.map(el => { try { return new URL(el.src || el.href, location.href).hostname } catch { return '' } }).filter(Boolean)")))
-        screenshot = output_dir / "page.png"
-        await page.screenshot(path=str(screenshot), full_page=False)
+        structure = await page.evaluate("""() => Array.from(document.querySelectorAll('body *')).slice(0, 10000).map(el => `${el.tagName.toLowerCase()}:${el.getAttribute('role') || ''}:${el instanceof HTMLInputElement ? el.type : ''}`).join('|')""")
+        screenshot = None
+        if screenshot_enabled:
+            screenshot = output_dir / "page.png"
+            await page.screenshot(path=str(screenshot), full_page=False)
         await browser.close()
     text_hash = hashlib.sha256(visible_text.encode()).hexdigest()
     metadata = {
@@ -74,13 +77,15 @@ async def capture(url: str, output_dir: Path) -> dict:
         "final_url": final_url,
         "title": title,
         "visible_text": visible_text,
+        "form_count": len(forms),
         "forms": forms,
         "password_fields": password_fields,
         "payment_fields": payment_fields,
         "external_domains": external_domains[:200],
         "request_count": counter[0],
         "text_sha256": text_hash,
-        "screenshot": "page.png",
+        "structure_hash": hashlib.sha256(structure.encode()).hexdigest(),
+        "screenshot": screenshot.name if screenshot else None,
     }
     (output_dir / "capture.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return metadata
@@ -90,8 +95,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("url")
     parser.add_argument("--output", default="/artifacts/capture")
+    parser.add_argument("--screenshot", action="store_true", help="Store an opt-in screenshot in addition to compact metadata")
     args = parser.parse_args()
-    print(json.dumps(asyncio.run(capture(args.url, Path(args.output)))))
+    print(json.dumps(asyncio.run(capture(args.url, Path(args.output), screenshot_enabled=args.screenshot))))
 
 
 if __name__ == "__main__":

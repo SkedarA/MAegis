@@ -4,9 +4,9 @@ from datetime import datetime
 
 
 SHARED_PROVIDER_MARKERS = ("cloudflare", "amazon", "google", "microsoft", "akamai", "fastly", "github", "vercel", "netlify")
-RELATION_WEIGHTS = {"resolves_to": 25, "aliases_to": 5, "uses_nameserver": 18, "uses_mx": 8, "presents_certificate": 35, "certificate_contains": 20, "registered_by": 2, "hosted_by_asn": 8, "redirects_to": 25, "uses_path_template": 25, "shares_favicon": 25, "shares_structure": 35}
-RELATION_FAMILIES = {"resolves_to": "network", "hosted_by_asn": "network", "aliases_to": "dns", "uses_nameserver": "dns", "uses_mx": "dns", "presents_certificate": "certificate", "certificate_contains": "certificate", "registered_by": "registration", "redirects_to": "url_behavior", "uses_path_template": "url_behavior", "shares_favicon": "content", "shares_structure": "content"}
-FAMILY_CAPS = {"network": 25, "dns": 22, "certificate": 35, "registration": 20, "url_behavior": 30, "content": 40, "temporal": 20, "intelligence": 35}
+RELATION_WEIGHTS = {"resolves_to": 25, "aliases_to": 5, "uses_nameserver": 18, "uses_mx": 8, "presents_certificate": 35, "shares_certificate_profile": 15, "certificate_contains": 20, "registered_by": 2, "shares_registration_profile": 20, "hosted_by_asn": 8, "redirects_to": 25, "uses_path_template": 25, "uses_domain_template": 25, "shares_favicon": 25, "shares_structure": 35}
+RELATION_FAMILIES = {"resolves_to": "network", "hosted_by_asn": "network", "aliases_to": "dns", "uses_nameserver": "dns", "uses_mx": "dns", "presents_certificate": "certificate", "shares_certificate_profile": "certificate", "certificate_contains": "certificate", "registered_by": "registration", "shares_registration_profile": "registration", "redirects_to": "url_behavior", "uses_path_template": "url_behavior", "uses_domain_template": "lexical", "shares_favicon": "content", "shares_structure": "content"}
+FAMILY_CAPS = {"network": 25, "dns": 22, "certificate": 35, "registration": 20, "url_behavior": 30, "lexical": 25, "content": 40, "temporal": 20, "intelligence": 35}
 
 
 @dataclass(frozen=True)
@@ -27,6 +27,11 @@ class LinkScore:
     reasons: list[str]
 
 
+def promotion_eligible(campaign_confidence: float, threat_confidence: float, brand_relevance: float) -> bool:
+    """Fail closed: automatic promotion requires three separately high gates."""
+    return campaign_confidence >= .75 and threat_confidence >= .85 and brand_relevance >= .65
+
+
 def relation_rule(relation_type: str, target_type: str, target_value: str, attributes: dict | None = None) -> RuleResult:
     value = target_value.lower()
     shared = any(marker in value or marker in str(attributes or {}).lower() for marker in SHARED_PROVIDER_MARKERS)
@@ -34,7 +39,7 @@ def relation_rule(relation_type: str, target_type: str, target_value: str, attri
     family = RELATION_FAMILIES.get(relation_type, "other")
     if shared and relation_type in {"resolves_to", "hosted_by_asn", "uses_nameserver", "redirects_to"}:
         return RuleResult(0, f"Shared provider {target_value} is context only", False, family)
-    reason = {"resolves_to": "shared non-generic IP", "aliases_to": "shared DNS alias", "uses_nameserver": "shared non-generic nameserver", "uses_mx": "shared mail infrastructure", "presents_certificate": "exact TLS certificate reuse", "certificate_contains": "shared certificate SAN group", "registered_by": "shared registrar", "redirects_to": "shared redirect destination", "uses_path_template": "matching normalized URL path template", "shares_favicon": "exact favicon fingerprint", "shares_structure": "shared page structure"}.get(relation_type, f"shared {target_type}")
+    reason = {"resolves_to": "shared non-generic IP", "aliases_to": "shared DNS alias", "uses_nameserver": "shared non-generic nameserver", "uses_mx": "shared mail infrastructure", "presents_certificate": "exact TLS certificate reuse", "shares_certificate_profile": "matching certificate issuance profile", "certificate_contains": "shared certificate SAN group", "registered_by": "shared registrar", "shares_registration_profile": "matching registration-batch profile", "redirects_to": "shared redirect destination", "uses_path_template": "matching normalized URL path template", "uses_domain_template": "matching multi-brand lure-name template", "shares_favicon": "exact favicon fingerprint", "shares_structure": "shared page structure"}.get(relation_type, f"shared {target_type}")
     return RuleResult(base, reason, base >= 18, family)
 
 

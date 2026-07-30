@@ -79,6 +79,20 @@ class BrandCampaignRelevance(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class CampaignReview(Base):
+    __tablename__ = "intelligence_campaign_reviews"
+    __table_args__ = (UniqueConstraint("tenant_id", "campaign_id", name="uq_tenant_campaign_review"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("intelligence_campaigns.id"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="unreviewed", index=True)
+    assigned_to: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_by: Mapped[str] = mapped_column(String(254), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class CampaignPattern(Base):
     __tablename__ = "intelligence_patterns"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
