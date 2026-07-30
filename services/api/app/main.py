@@ -11,11 +11,11 @@ from .brand_catalog import get_catalog
 from .brand_enrollment import enroll_catalog
 from .config import get_settings
 from .database import Base, engine, get_db
-from .detection import analyze_domain, canonical_brand, normalize_domain
+from .detection import DETECTOR_VERSION, analyze_domain, canonical_brand, normalize_domain
 from .domain_context import build_domain_context
-from .models import AnalystAccount, AuditEvent, BackgroundJob, Candidate, EvidenceItem, Incident, IncidentNote, IncidentStatus, ProtectedBrand, ScoreContribution, Severity, SourceConnector, WorkerHeartbeat
+from .models import AnalystAccount, AuditEvent, BackgroundJob, Candidate, EvidenceItem, Incident, IncidentNote, IncidentStatus, Observation, ProtectedBrand, ScoreContribution, Severity, SourceConnector, WorkerHeartbeat
 from .runtime_health import worker_is_fresh
-from .schemas import AIAnalysisView, AnalystCreate, AnalystView, AssignmentUpdate, BrandCreate, BrandView, CatalogBrandView, CatalogEnrollmentCreate, CatalogEnrollmentView, EvidenceView, IncidentNoteCreate, IncidentNoteView, IncidentView, SubmissionCreate, TriageUpdate
+from .schemas import AIAnalysisView, AnalystCreate, AnalystUpdate, AnalystView, AssignmentUpdate, AuditEventView, BrandCreate, BrandUpdate, BrandView, CatalogBrandView, CatalogEnrollmentCreate, CatalogEnrollmentView, ConnectorUpdate, EvidenceView, IncidentNoteCreate, IncidentNoteView, IncidentView, SubmissionCreate, TriageUpdate
 from .scoring import score_signals
 from .security import Principal, require_administrator, require_analyst, require_principal
 
@@ -98,7 +98,7 @@ def list_analysts(db: Session = Depends(get_db), principal: Principal = Depends(
     analysts = list(
         db.scalars(
             select(AnalystAccount)
-            .where(AnalystAccount.tenant_id == principal.tenant_id, AnalystAccount.active.is_(True))
+            .where(AnalystAccount.tenant_id == principal.tenant_id)
             .order_by(AnalystAccount.display_name)
         )
     )
@@ -119,6 +119,24 @@ def create_analyst(payload: AnalystCreate, db: Session = Depends(get_db), princi
     db.add(account)
     db.flush()
     audit(db, principal, "analyst.created", "analyst_account", account.id, {"email": account.email, "role": account.role})
+    db.commit()
+    return account
+
+
+@app.patch("/api/v1/analysts/{analyst_id}", response_model=AnalystView)
+def update_analyst(analyst_id: str, payload: AnalystUpdate, db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> AnalystAccount:
+    require_administrator(principal)
+    account = db.scalar(select(AnalystAccount).where(AnalystAccount.id == analyst_id, AnalystAccount.tenant_id == principal.tenant_id))
+    if not account:
+        raise HTTPException(status_code=404, detail="Analyst account not found")
+    if payload.active is False and account.email == principal.email:
+        raise HTTPException(status_code=409, detail="You cannot deactivate your own account")
+    before = {"role": account.role, "active": account.active}
+    if payload.role is not None:
+        account.role = payload.role
+    if payload.active is not None:
+        account.active = payload.active
+    audit(db, principal, "analyst.updated", "analyst_account", account.id, {"before": before, "after": {"role": account.role, "active": account.active}})
     db.commit()
     return account
 
@@ -150,6 +168,18 @@ def create_brand(payload: BrandCreate, db: Session = Depends(get_db), principal:
 @app.get("/api/v1/brands", response_model=list[BrandView])
 def list_brands(db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> list[ProtectedBrand]:
     return list(db.scalars(select(ProtectedBrand).where(ProtectedBrand.tenant_id == principal.tenant_id).order_by(ProtectedBrand.name)))
+
+
+@app.patch("/api/v1/brands/{brand_id}", response_model=BrandView)
+def update_brand(brand_id: str, payload: BrandUpdate, db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> ProtectedBrand:
+    require_analyst(principal)
+    brand = db.scalar(select(ProtectedBrand).where(ProtectedBrand.id == brand_id, ProtectedBrand.tenant_id == principal.tenant_id))
+    if not brand:
+        raise HTTPException(status_code=404, detail="Protected brand not found")
+    brand.monitoring_enabled = payload.monitoring_enabled
+    audit(db, principal, "brand.monitoring_updated", "protected_brand", brand.id, {"monitoring_enabled": brand.monitoring_enabled})
+    db.commit()
+    return brand
 
 
 @app.get("/api/v1/brand-catalog", response_model=list[CatalogBrandView])
@@ -399,6 +429,63 @@ def request_capture(incident_id: str, db: Session = Depends(get_db), principal: 
 def list_connectors(db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> list[dict]:
     connectors = db.scalars(select(SourceConnector).where(SourceConnector.tenant_id == principal.tenant_id).order_by(SourceConnector.connector_type)).all()
     return [{"id": item.id, "type": item.connector_type, "enabled": item.enabled, "status": item.status, "checkpoint": item.checkpoint, "observations_seen": item.observations_seen, "last_success_at": item.last_success_at, "last_error": item.last_error} for item in connectors]
+
+
+@app.patch("/api/v1/connectors/{connector_id}")
+def update_connector(connector_id: str, payload: ConnectorUpdate, db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> dict:
+    require_administrator(principal)
+    connector = db.scalar(select(SourceConnector).where(SourceConnector.id == connector_id, SourceConnector.tenant_id == principal.tenant_id))
+    if not connector:
+        raise HTTPException(status_code=404, detail="Connector not found")
+    connector.enabled = payload.enabled
+    connector.status = "configured" if connector.enabled else "disabled"
+    audit(db, principal, "connector.updated", "source_connector", connector.id, {"enabled": connector.enabled, "type": connector.connector_type})
+    db.commit()
+    return {"id": connector.id, "type": connector.connector_type, "enabled": connector.enabled, "status": connector.status, "checkpoint": connector.checkpoint, "observations_seen": connector.observations_seen, "last_success_at": connector.last_success_at, "last_error": connector.last_error}
+
+
+@app.get("/api/v1/audit-events", response_model=list[AuditEventView])
+def list_audit_events(
+    limit: int = Query(default=200, ge=1, le=500),
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require_principal),
+) -> list[AuditEvent]:
+    require_analyst(principal)
+    return list(db.scalars(select(AuditEvent).where(AuditEvent.tenant_id == principal.tenant_id).order_by(AuditEvent.created_at.desc()).limit(limit)))
+
+
+@app.get("/api/v1/operations/summary")
+def operations_summary(db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> dict:
+    tenant = principal.tenant_id
+    job_rows = db.execute(select(BackgroundJob.status, func.count(BackgroundJob.id)).where(BackgroundJob.tenant_id == tenant).group_by(BackgroundJob.status)).all()
+    return {
+        "brands": db.scalar(select(func.count(ProtectedBrand.id)).where(ProtectedBrand.tenant_id == tenant)) or 0,
+        "active_brands": db.scalar(select(func.count(ProtectedBrand.id)).where(ProtectedBrand.tenant_id == tenant, ProtectedBrand.monitoring_enabled.is_(True))) or 0,
+        "observations": db.scalar(select(func.count(Observation.id)).where(Observation.tenant_id == tenant)) or 0,
+        "candidates": db.scalar(select(func.count(Candidate.id)).where(Candidate.tenant_id == tenant)) or 0,
+        "incidents": db.scalar(select(func.count(Incident.id)).where(Incident.tenant_id == tenant)) or 0,
+        "open_incidents": db.scalar(select(func.count(Incident.id)).where(Incident.tenant_id == tenant, Incident.status.not_in([IncidentStatus.CLOSED, IncidentStatus.FALSE_POSITIVE]))) or 0,
+        "evidence_items": db.scalar(select(func.count(EvidenceItem.id)).where(EvidenceItem.tenant_id == tenant)) or 0,
+        "jobs": {status_name: count for status_name, count in job_rows},
+        "worker": worker_runtime(db),
+    }
+
+
+@app.get("/api/v1/settings")
+def safe_settings(_: Principal = Depends(require_principal)) -> dict:
+    current = get_settings()
+    return {
+        "environment": current.environment,
+        "capture_enabled": current.capture_enabled,
+        "detector_version": DETECTOR_VERSION,
+        "max_generated_candidates": current.max_generated_candidates,
+        "discovery_brand_batch_size": current.discovery_brand_batch_size,
+        "discovery_dns_batch_size": current.discovery_dns_batch_size,
+        "discovery_rdap_batch_size": current.discovery_rdap_batch_size,
+        "fresh_registration_max_age_days": current.fresh_registration_max_age_days,
+        "discovery_poll_interval_seconds": current.discovery_poll_interval_seconds,
+        "worker_health_stale_seconds": current.worker_health_stale_seconds,
+    }
 
 
 @app.get("/api/v1/metrics")

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { IncidentDetail } from "./incident-detail";
 import type { AnalystAccount, Incident } from "./incident-types";
 
@@ -267,12 +268,12 @@ export default function Home() {
           <p className="nav-label">Monitor</p>
           <a className="nav-item active" href="#overview"><span>⌁</span>Overview</a>
           <a className="nav-item" href="#incidents"><span>◇</span>Incidents <b>{incidents.length}</b></a>
-          <a className="nav-item" href="#discovery"><span>◎</span>Discovery</a>
-          <a className="nav-item" href="#brands"><span>◫</span>Protected brands</a>
+          <Link className="nav-item" href="/discovery"><span>◎</span>Discovery</Link>
+          <Link className="nav-item" href="/brands"><span>◫</span>Protected brands</Link>
           <p className="nav-label">Operate</p>
-          <a className="nav-item" href="#sources"><span>⇄</span>Source health</a>
-          <a className="nav-item" href="#audit"><span>▤</span>Audit log</a>
-          <a className="nav-item" href="#settings"><span>⚙</span>Settings</a>
+          <Link className="nav-item" href="/team"><span>♙</span>Analyst team</Link>
+          <Link className="nav-item" href="/audit"><span>▤</span>Audit log</Link>
+          <Link className="nav-item" href="/settings"><span>⚙</span>Settings</Link>
         </nav>
         <div className="sidebar-status">
           <div className="pulse-dot" />

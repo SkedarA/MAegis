@@ -87,3 +87,42 @@ test("hosted analyst identity is forwarded to the operational API", async () => 
   assert.match(shared, /oai-authenticated-user-email/);
   assert.match(shared, /oai-authenticated-user-full-name/);
 });
+
+test("operational console routes render their dedicated workspaces", async () => {
+  for (const [path, title] of [
+    ["/brands", "Protected brands"],
+    ["/discovery", "Discovery control"],
+    ["/team", "Analyst team"],
+    ["/audit", "Audit trail"],
+    ["/settings", "Operational settings"],
+  ]) {
+    const response = await request(path);
+    assert.equal(response.status, 200, path);
+    assert.match(await response.text(), new RegExp(title, "i"), path);
+  }
+});
+
+test("operational read routes fail closed without the private API", async () => {
+  const expected = [
+    ["/api/connectors", { mode: "demo", connectors: [] }],
+    ["/api/audit", { mode: "demo", events: [] }],
+    ["/api/operations", { mode: "demo", summary: null }],
+    ["/api/settings", { mode: "demo", settings: null }],
+  ];
+  for (const [path, body] of expected) {
+    const response = await request(path);
+    assert.equal(response.status, 200, path);
+    assert.deepEqual(await response.json(), body, path);
+  }
+});
+
+test("operational mutations are read-only without the private API", async () => {
+  for (const path of ["/api/brands/demo", "/api/connectors/demo", "/api/accounts/demo"]) {
+    const response = await request(path, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: false, active: false, monitoring_enabled: false }),
+    });
+    assert.equal(response.status, 409, path);
+  }
+});

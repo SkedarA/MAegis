@@ -30,6 +30,10 @@ class BrandView(BaseModel):
     created_at: datetime
 
 
+class BrandUpdate(BaseModel):
+    monitoring_enabled: bool
+
+
 class CatalogBrandView(BaseModel):
     key: str
     name: str
@@ -86,6 +90,26 @@ class AnalystView(BaseModel):
     display_name: str
     role: str
     active: bool
+
+
+class AnalystUpdate(BaseModel):
+    role: Literal["viewer", "analyst", "manager", "administrator"] | None = None
+    active: bool | None = None
+
+
+class ConnectorUpdate(BaseModel):
+    enabled: bool
+
+
+class AuditEventView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    actor: str
+    action: str
+    resource_type: str
+    resource_id: str
+    payload: dict
+    created_at: datetime
 
 
 class AssignmentUpdate(BaseModel):
