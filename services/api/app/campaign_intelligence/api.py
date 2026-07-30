@@ -117,5 +117,7 @@ def rebuild(db: Session = Depends(get_db), principal: Principal = Depends(requir
     queued = db.scalar(select(BackgroundJob.id).where(BackgroundJob.tenant_id == principal.tenant_id, BackgroundJob.job_type == "rebuild_intelligence", BackgroundJob.status.in_(["queued", "running"])))
     if queued: return {"job_id": queued, "status": "already_queued"}
     job = BackgroundJob(tenant_id=principal.tenant_id, job_type="rebuild_intelligence", payload={"tenant_id": principal.tenant_id})
-    db.add(job); db.add(AuditEvent(tenant_id=principal.tenant_id, actor=principal.subject, action="intelligence.rebuild_requested", resource_type="background_job", resource_id=job.id, payload={}))
+    db.add(job)
+    db.flush()
+    db.add(AuditEvent(tenant_id=principal.tenant_id, actor=principal.subject, action="intelligence.rebuild_requested", resource_type="background_job", resource_id=job.id, payload={}))
     db.commit(); return {"job_id": job.id, "status": "queued"}

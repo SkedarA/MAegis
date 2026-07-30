@@ -59,6 +59,12 @@ test("campaign intelligence route has a safe unconfigured fallback", async () =>
   assert.deepEqual(await response.json(), { mode: "demo", summary: null, campaigns: [], patterns: [] });
 });
 
+test("campaign rebuild proxy preserves backend failures", async () => {
+  const route = await readFile(new URL("../app/api/intelligence/route.ts", import.meta.url), "utf8");
+  assert.match(route, /Graph rebuild failed with status/);
+  assert.match(route, /await response\.text\(\)/);
+});
+
 test("live queue labels do not claim detections are verified", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.match(page, /Unconfirmed detections waiting for first review/);
