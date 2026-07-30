@@ -269,6 +269,7 @@ def list_incidents(
     incident_status: str | None = Query(default=None, alias="status"),
     severity: str | None = None,
     query: str | None = None,
+    sort: str = Query(default="priority", pattern="^(priority|newest)$"),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
     principal: Principal = Depends(require_principal),
@@ -280,7 +281,8 @@ def list_incidents(
         statement = statement.where(Incident.severity == Severity(severity))
     if query:
         statement = statement.where(Incident.domain.ilike(f"%{query}%"))
-    return list(db.scalars(statement.order_by(Incident.risk_score.desc(), Incident.created_at.desc()).limit(limit)).unique())
+    ordering = (Incident.created_at.desc(), Incident.risk_score.desc()) if sort == "newest" else (Incident.risk_score.desc(), Incident.created_at.desc())
+    return list(db.scalars(statement.order_by(*ordering).limit(limit)).unique())
 
 
 @app.get("/api/v1/incidents/{incident_id}", response_model=IncidentView)

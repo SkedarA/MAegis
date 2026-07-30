@@ -84,6 +84,19 @@ class DetectionTests(unittest.TestCase):
         self.assertEqual(suffixes, {"com", "ro", "net"})
         self.assertEqual(len(variants), len({item.domain for item in variants}))
 
+    def test_unicode_homograph_candidates_are_emitted_as_valid_idna(self):
+        variants = generate_candidate_variants("Acme", tlds=("com",), limit=500)
+        homographs = [item for item in variants if item.mutation == "unicode_homoglyph"]
+        self.assertTrue(homographs)
+        self.assertTrue(all(item.domain.startswith("xn--") for item in homographs))
+        self.assertTrue(all(item.unicode_label for item in homographs))
+        self.assertTrue(all(item.evidence().get("unicode_label") for item in homographs))
+
+    def test_default_suffixes_cover_modern_abuse_surfaces(self):
+        variants = generate_candidate_variants("Acme", limit=100)
+        exact_suffixes = {item.domain.rsplit(".", 1)[-1] for item in variants if item.mutation == "tld_swap"}
+        self.assertTrue({"ro", "com", "xyz", "click", "store", "live"}.issubset(exact_suffixes))
+
 
 if __name__ == "__main__":
     unittest.main()

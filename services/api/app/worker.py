@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
-from .brand_schedule import select_brand_batch
-from .candidate_schedule import brand_checkpoint, rotating_batch, with_brand_checkpoint
+from .brand_schedule import select_brand_batch_at_cursor
+from .candidate_schedule import brand_checkpoint, fetch_candidate_batch, prioritized_rotating_batch, with_brand_checkpoint
 from .connectors import CZDSZoneConnector, CertificateTransparencyConnector, DNSCandidateConnector, RDAPRegistrationConnector, URLScanConnector, fetch_rdap
 from .config import get_settings
 from .database import Base, SessionLocal, engine
@@ -21,6 +21,7 @@ from .scoring import score_signals
 
 WORKER_NAME = "discovery"
 PERSISTENT_SOURCE_SIGNALS = {"threat_feed_verdict", "generated_candidate", "fresh_registration_window"}
+HIGH_YIELD_MUTATIONS = {"tld_swap", "brand_plus_keyword", "keyword_plus_brand", "unicode_homoglyph"}
 
 
 def update_worker_heartbeat(
@@ -149,11 +150,11 @@ def persist_finding(db, brand: ProtectedBrand, domain: str, source: str, raw_has
         db.add(ScoreContribution(incident_id=incident.id, signal=signal.name, weight=signal.weight, value=signal.value, explanation=signal.explanation))
 
 
-async def poll_live_sources() -> None:
+async def poll_live_sources(brand_cursor: int = 0) -> int:
     settings = get_settings()
     with SessionLocal() as db:
         enrolled = list(db.scalars(select(ProtectedBrand).where(ProtectedBrand.monitoring_enabled.is_(True)).order_by(ProtectedBrand.id)).all())
-        brands = select_brand_batch(enrolled, settings.discovery_brand_batch_size)
+        brands, next_brand_cursor = select_brand_batch_at_cursor(enrolled, settings.discovery_brand_batch_size, brand_cursor)
         for brand in brands:
             live_connectors = [
                 (CertificateTransparencyConnector(), brand.canonical_name),
@@ -199,6 +200,7 @@ async def poll_live_sources() -> None:
                 variants,
                 settings.discovery_rdap_batch_size,
             )
+        return next_brand_cursor
 
 
 async def poll_generated_candidates(
@@ -213,41 +215,50 @@ async def poll_generated_candidates(
         return
     checkpoint = brand_checkpoint(state.checkpoint, brand.id)
     cursor = int(checkpoint.get("cursor", 0))
-    batch, _ = rotating_batch(variants, cursor, batch_size)
-    attempted = 0
-    observations_seen = 0
-    failure: Exception | None = None
-    for variant in batch:
-        try:
-            observations, _ = await connector.fetch(variant.domain, {})
-        except Exception as exc:
-            failure = exc
-            break
-        attempted += 1
-        for observation in observations:
-            payload = {**observation.payload, "candidate_generation": variant.evidence()}
-            persist_finding(
-                db,
-                brand,
-                observation.domain,
-                observation.source,
-                observation.raw_hash,
-                payload,
-                connector.version,
-            )
-            observations_seen += 1
-    _, next_cursor = rotating_batch(variants, cursor, attempted)
+    priority_cursor = int(checkpoint.get("priority_cursor", 0))
+    batch, next_cursor, next_priority_cursor = prioritized_rotating_batch(
+        variants,
+        cursor,
+        priority_cursor,
+        batch_size,
+        lambda item: item.mutation in HIGH_YIELD_MUTATIONS,
+    )
+    collected, failures = await fetch_candidate_batch(connector, batch)
+    for variant, observation in collected:
+        payload = {**observation.payload, "candidate_generation": variant.evidence()}
+        persist_finding(
+            db,
+            brand,
+            observation.domain,
+            observation.source,
+            observation.raw_hash,
+            payload,
+            connector.version,
+        )
+    observations_seen = len(collected)
     next_checkpoint = {
         "cursor": next_cursor,
+        "priority_cursor": next_priority_cursor,
         "pool_size": len(variants),
+        "attempted": len(batch),
+        "failed": len(failures),
         "last_poll": datetime.now(timezone.utc).isoformat(),
     }
     state.checkpoint = with_brand_checkpoint(state.checkpoint, brand.id, next_checkpoint)
     state.observations_seen += observations_seen
-    state.last_success_at = datetime.now(timezone.utc) if failure is None else state.last_success_at
-    state.status = "degraded" if failure else "healthy"
-    state.last_error = str(failure)[:1000] if failure else None
+    state.last_success_at = datetime.now(timezone.utc) if len(failures) < len(batch) else state.last_success_at
+    state.status = "degraded" if failures else "healthy"
+    state.last_error = "; ".join(failures)[:1000] if failures else None
     db.commit()
+
+
+def load_worker_progress() -> tuple[int, int]:
+    with SessionLocal() as db:
+        heartbeat = db.get(WorkerHeartbeat, WORKER_NAME)
+        if heartbeat is None:
+            return 0, 0
+        details = heartbeat.details or {}
+        return max(0, int(heartbeat.cycle_count or 0)), max(0, int(details.get("brand_cursor", 0)))
 
 
 async def process_jobs() -> None:
@@ -341,8 +352,8 @@ async def main() -> None:
     Base.metadata.create_all(bind=engine)
     settings = get_settings()
     instance_id = os.getenv("HOSTNAME") or socket.gethostname()
-    cycle_count = 0
-    update_worker_heartbeat(instance_id, "starting", cycle_count=cycle_count)
+    cycle_count, brand_cursor = load_worker_progress()
+    update_worker_heartbeat(instance_id, "starting", cycle_count=cycle_count, details={"brand_cursor": brand_cursor, "brand_batch_size": settings.discovery_brand_batch_size})
     while True:
         cycle_started_at = datetime.now(timezone.utc)
         update_worker_heartbeat(
@@ -350,10 +361,10 @@ async def main() -> None:
             "running",
             cycle_started_at=cycle_started_at,
             cycle_count=cycle_count,
-            details={"brand_batch_size": settings.discovery_brand_batch_size},
+            details={"brand_cursor": brand_cursor, "brand_batch_size": settings.discovery_brand_batch_size},
         )
         try:
-            await poll_live_sources()
+            brand_cursor = await poll_live_sources(brand_cursor)
             for _ in range(50):
                 await process_jobs()
         except Exception as exc:
@@ -371,7 +382,7 @@ async def main() -> None:
             "healthy",
             cycle_completed_at=datetime.now(timezone.utc),
             cycle_count=cycle_count,
-            details={"brand_batch_size": settings.discovery_brand_batch_size},
+            details={"brand_cursor": brand_cursor, "brand_batch_size": settings.discovery_brand_batch_size},
         )
         await asyncio.sleep(settings.discovery_poll_interval_seconds)
 

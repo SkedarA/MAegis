@@ -88,6 +88,13 @@ test("hosted analyst identity is forwarded to the operational API", async () => 
   assert.match(shared, /oai-authenticated-user-full-name/);
 });
 
+test("incident feed combines newest findings with priority cases", async () => {
+  const route = await readFile(new URL("../app/api/incidents/route.ts", import.meta.url), "utf8");
+  assert.match(route, /sort=priority/);
+  assert.match(route, /sort=newest/);
+  assert.match(route, /findIndex/);
+});
+
 test("operational console routes render their dedicated workspaces", async () => {
   for (const [path, title] of [
     ["/brands", "Protected brands"],

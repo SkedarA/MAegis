@@ -3,7 +3,7 @@ import unicodedata
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-DETECTOR_VERSION = "rules-2.2"
+DETECTOR_VERSION = "rules-2.3"
 SUSPICIOUS_TOKENS = {
     "account", "auth", "billing", "delivery", "help", "id", "invoice", "login",
     "pay", "payment", "portal", "secure", "security", "signin", "support", "track",
@@ -34,8 +34,14 @@ VOWELS = "aeiou"
 AFFIXES = ("get", "my", "online", "official")
 DEFAULT_CANDIDATE_TLDS = (
     "com", "ro", "net", "org", "eu", "co", "io", "info", "online", "site",
-    "shop", "top", "app", "cloud",
+    "shop", "top", "app", "cloud", "xyz", "store", "live", "click", "website",
+    "dev", "biz", "club", "vip",
 )
+UNICODE_HOMOGLYPHS = {
+    "a": ("а",), "c": ("с",), "e": ("е",), "i": ("і",), "j": ("ј",),
+    "l": ("ӏ",), "o": ("о",), "p": ("р",), "s": ("ѕ",), "x": ("х",),
+    "y": ("у",),
+}
 
 
 @dataclass(frozen=True)
@@ -51,9 +57,13 @@ class GeneratedCandidate:
     domain: str
     mutation: str
     label: str
+    unicode_label: str | None = None
 
     def evidence(self) -> dict[str, str]:
-        return {"mutation": self.mutation, "generated_label": self.label}
+        evidence = {"mutation": self.mutation, "generated_label": self.label}
+        if self.unicode_label:
+            evidence["unicode_label"] = self.unicode_label
+        return evidence
 
 
 def normalize_domain(value: str) -> tuple[str, str]:
@@ -181,12 +191,12 @@ def generate_candidate_variants(
     brand = canonical_brand(brand_name)
     if len(brand) < 3 or limit <= 0:
         return []
-    labels: dict[str, str] = {}
+    labels: dict[str, tuple[str, str | None]] = {}
 
-    def add(label: str, mutation: str) -> None:
+    def add(label: str, mutation: str, unicode_label: str | None = None) -> None:
         normalized = label.strip("-")
         if 3 <= len(normalized) <= 63 and normalized != brand:
-            labels.setdefault(normalized, mutation)
+            labels.setdefault(normalized, (mutation, unicode_label))
 
     # High-yield combinations are ordered first so even small sweeps cover them.
     abuse_tokens = tuple(dict.fromkeys((*keywords, "login", "secure", "support", "verify", "account", "payment")))
@@ -218,6 +228,13 @@ def generate_candidate_variants(
             add(brand[:i] + replacement + brand[i:], "keyboard_insertion")
         for replacement in ASCII_HOMOGLYPHS.get(brand[i], ()):
             add(brand[:i] + replacement + brand[i + 1 :], "ascii_homoglyph")
+        for replacement in UNICODE_HOMOGLYPHS.get(brand[i], ()):
+            unicode_label = brand[:i] + replacement + brand[i + 1 :]
+            try:
+                ascii_label = unicode_label.encode("idna").decode("ascii")
+            except UnicodeError:
+                continue
+            add(ascii_label, "unicode_homoglyph", unicode_label)
         if brand[i] in VOWELS:
             for replacement in VOWELS:
                 if replacement != brand[i]:
@@ -226,8 +243,11 @@ def generate_candidate_variants(
     # Interleave mutation families so a bounded pool is not dominated by the
     # first few keyword or keyboard variants.
     by_mutation: dict[str, list[str]] = {}
-    for label, mutation in labels.items():
+    unicode_labels: dict[str, str] = {}
+    for label, (mutation, unicode_label) in labels.items():
         by_mutation.setdefault(mutation, []).append(label)
+        if unicode_label:
+            unicode_labels[label] = unicode_label
     ordered_labels: list[tuple[str, str]] = []
     for index in range(max((len(items) for items in by_mutation.values()), default=0)):
         for mutation, items in by_mutation.items():
@@ -245,7 +265,7 @@ def generate_candidate_variants(
     for tld_offset in range(len(normalized_tlds)):
         for index, (label, mutation) in enumerate(ordered_labels):
             tld = normalized_tlds[(index + tld_offset) % len(normalized_tlds)]
-            variants.append(GeneratedCandidate(f"{label}.{tld}", mutation, label))
+            variants.append(GeneratedCandidate(f"{label}.{tld}", mutation, label, unicode_labels.get(label)))
             if len(variants) >= limit:
                 return variants
     return variants
