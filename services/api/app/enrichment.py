@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import ipaddress
 import ssl
 from dataclasses import dataclass
@@ -38,9 +39,9 @@ async def fetch_dns(domain: str, lifetime: float = 5.0) -> dict[str, Any]:
     resolver = dns.asyncresolver.Resolver()
     resolver.lifetime = lifetime
 
-    async def query(record_type: str) -> tuple[str, list[str], str | None]:
+    async def query(record_type: str, query_name: str = domain) -> tuple[str, list[str], str | None]:
         try:
-            answer = await resolver.resolve(domain, record_type, lifetime=lifetime, raise_on_no_answer=False)
+            answer = await resolver.resolve(query_name, record_type, lifetime=lifetime, raise_on_no_answer=False)
             values = sorted({item.to_text().rstrip(".")[:2048] for item in answer})[:100] if answer.rrset else []
             return record_type, values, None
         except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
@@ -52,12 +53,25 @@ async def fetch_dns(domain: str, lifetime: float = 5.0) -> dict[str, Any]:
     records = {record_type: values for record_type, values, _ in results}
     errors = {record_type: error for record_type, _, error in results if error}
     addresses = records["A"] + records["AAAA"]
+    wildcard_test: dict[str, Any] | None = None
+    if len(domain.split(".")) == 2 and addresses:
+        tld = domain.rsplit(".", 1)[-1]
+        token = hashlib.sha256(domain.encode()).hexdigest()[:20]
+        sibling = f"maegis-{token}.{tld}"
+        wildcard_results = await asyncio.gather(query("A", sibling), query("AAAA", sibling))
+        wildcard_addresses = sorted({value for _, values, _ in wildcard_results for value in values})
+        wildcard_test = {
+            "query": sibling,
+            "addresses": wildcard_addresses,
+            "matched_candidate": bool(wildcard_addresses) and set(wildcard_addresses) == set(addresses),
+        }
     return {
         "domain": domain,
         "records": records,
         "errors": errors,
         "resolved_addresses": addresses,
         "all_addresses_public": bool(addresses) and all(ipaddress.ip_address(value).is_global for value in addresses),
+        "registry_wildcard": wildcard_test,
         "collected_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -148,12 +162,17 @@ def enrichment_signals(
 ) -> list[Signal]:
     current = now or datetime.now(timezone.utc)
     signals: list[Signal] = []
+    wildcard = (dns_payload or {}).get("registry_wildcard") or {}
+    if wildcard.get("matched_candidate"):
+        signals.append(Signal("enrichment.registry_wildcard", 1, -100, "A random sibling under the same registry suffix resolves to the identical address set; treat this as registry wildcard noise"))
     if dns_payload and dns_payload.get("records", {}).get("MX"):
         signals.append(Signal("enrichment.mx_configured", 1, 8, "The candidate has mail-exchange records and can receive email"))
     registered = registration_date(rdap_payload or {})
     if registered:
         age_days = max(0, (current - registered).days)
-        if age_days <= 30:
+        if age_days <= 7:
+            signals.append(Signal("enrichment.just_registered", 1, 22, f"The domain was registered {age_days} days ago"))
+        elif age_days <= 30:
             signals.append(Signal("enrichment.new_registration", 1, 15, f"The domain was registered {age_days} days ago"))
         elif age_days <= 90:
             signals.append(Signal("enrichment.recent_registration", 1, 8, f"The domain was registered {age_days} days ago"))

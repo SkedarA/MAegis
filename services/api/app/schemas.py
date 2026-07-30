@@ -30,6 +30,10 @@ class BrandView(BaseModel):
     created_at: datetime
 
 
+class BrandUpdate(BaseModel):
+    monitoring_enabled: bool
+
+
 class CatalogBrandView(BaseModel):
     key: str
     name: str
@@ -71,6 +75,60 @@ class TriageUpdate(BaseModel):
     severity: Literal["informational", "low", "medium", "high", "critical"] | None = None
     assigned_to: str | None = Field(default=None, max_length=160)
     rationale: str = Field(min_length=5, max_length=4000)
+
+
+class AnalystCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=254, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+    display_name: str = Field(min_length=2, max_length=160)
+    role: Literal["viewer", "analyst", "manager", "administrator"] = "analyst"
+
+
+class AnalystView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    email: str
+    display_name: str
+    role: str
+    active: bool
+
+
+class AnalystUpdate(BaseModel):
+    role: Literal["viewer", "analyst", "manager", "administrator"] | None = None
+    active: bool | None = None
+
+
+class ConnectorUpdate(BaseModel):
+    enabled: bool
+
+
+class AuditEventView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    actor: str
+    action: str
+    resource_type: str
+    resource_id: str
+    payload: dict
+    created_at: datetime
+
+
+class AssignmentUpdate(BaseModel):
+    analyst_id: str
+
+
+class IncidentNoteCreate(BaseModel):
+    body: str = Field(min_length=2, max_length=8000)
+
+
+class IncidentNoteView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    incident_id: str
+    author_id: str
+    author_email: str
+    author_name: str
+    body: str
+    created_at: datetime
 
 
 class ContributionView(BaseModel):

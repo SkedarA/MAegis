@@ -15,6 +15,7 @@ export type Incident = {
   assignedTo: string | null;
   signals: string[];
   summary: string;
+  references?: Array<{ label: string; url: string }>;
 };
 
 export type EvidenceItem = {
@@ -24,4 +25,32 @@ export type EvidenceItem = {
   payload: Record<string, unknown>;
   rawHash: string;
   collectedAt: string;
+};
+
+export type AnalystAccount = {
+  id: string;
+  email: string;
+  display_name: string;
+  role: string;
+  active: boolean;
+};
+
+export type IncidentNote = {
+  id: string;
+  incident_id: string;
+  author_id: string;
+  author_email: string;
+  author_name: string;
+  body: string;
+  created_at: string;
+};
+
+export type DomainContext = {
+  domain_type: "platform_tenant" | "registered_domain";
+  registrable_domain: string;
+  platform_suffix: string | null;
+  hosting_provider: { name: string | null; contact: string | null };
+  registrar: { name: string | null; contact: string | null };
+  registration_date: string | null;
+  registration_relevant: boolean;
 };

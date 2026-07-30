@@ -41,6 +41,18 @@ class Organization(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class AnalystAccount(Base):
+    __tablename__ = "analyst_accounts"
+    __table_args__ = (UniqueConstraint("tenant_id", "email", name="uq_analyst_tenant_email"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(254), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    role: Mapped[str] = mapped_column(String(30), default="analyst")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ProtectedBrand(Base):
     __tablename__ = "protected_brands"
     __table_args__ = (Index("ix_brand_tenant_name", "tenant_id", "name"),)
@@ -134,6 +146,19 @@ class EvidenceItem(Base):
     collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class IncidentNote(Base):
+    __tablename__ = "incident_notes"
+    __table_args__ = (Index("ix_incident_note_timeline", "tenant_id", "incident_id", "created_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id"), nullable=False)
+    author_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    author_email: Mapped[str] = mapped_column(String(254), nullable=False)
+    author_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ScoreContribution(Base):
     __tablename__ = "score_contributions"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -168,3 +193,16 @@ class BackgroundJob(Base):
     run_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+
+class WorkerHeartbeat(Base):
+    __tablename__ = "worker_heartbeats"
+    worker_name: Mapped[str] = mapped_column(String(80), primary_key=True)
+    instance_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="starting")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    last_cycle_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_cycle_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cycle_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    details: Mapped[dict] = mapped_column(JSON, default=dict)

@@ -24,14 +24,14 @@ export async function POST(request: Request, context: Context) {
   try {
     const response = await fetch(url, {
       method: "POST",
-      headers: backendHeaders({ "Content-Type": "application/json" }),
+      headers: backendHeaders(request, { "Content-Type": "application/json" }),
       body: JSON.stringify(payload),
       cache: "no-store",
       signal: AbortSignal.timeout(7000),
     });
     const body = await response.json();
     if (!response.ok) return Response.json({ error: body.detail ?? `Backend returned ${response.status}` }, { status: response.status });
-    const brands = await fetchBrandMap();
+    const brands = await fetchBrandMap(request);
     return Response.json({ incident: toConsoleIncident(body as ApiIncident, brands) }, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return Response.json({ error: "Triage service unavailable" }, { status: 502 });

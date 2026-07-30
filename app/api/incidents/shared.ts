@@ -19,10 +19,29 @@ export function backendUrl(path: string) {
   return baseUrl ? `${baseUrl.replace(/\/$/, "")}${path}` : null;
 }
 
-export function backendHeaders(extra: Record<string, string> = {}) {
+function decodedHeader(request: Request | undefined, name: string) {
+  const value = request?.headers.get(name);
+  if (!value) return null;
+  try { return decodeURIComponent(value); } catch { return null; }
+}
+
+export function backendHeaders(request?: Request, extra: Record<string, string> = {}) {
+  const authenticatedEmail = request?.headers.get("oai-authenticated-user-email");
+  const authenticatedName = request?.headers.get("oai-authenticated-user-full-name-encoding") === "percent-encoded-utf-8"
+    ? decodedHeader(request, "oai-authenticated-user-full-name")
+    : null;
+  const email = authenticatedEmail ?? process.env.MAEGIS_USER_EMAIL ?? "analyst@maegis.local";
+  const isConfiguredOwner = Boolean(authenticatedEmail && process.env.MAEGIS_OWNER_EMAIL && authenticatedEmail.toLowerCase() === process.env.MAEGIS_OWNER_EMAIL.toLowerCase());
+  const role = authenticatedEmail
+    ? isConfiguredOwner ? "administrator" : process.env.MAEGIS_AUTHENTICATED_USER_ROLE ?? "analyst"
+    : process.env.MAEGIS_USER_ROLE ?? "administrator";
   return {
     ...(process.env.MAEGIS_API_KEY ? { "X-API-Key": process.env.MAEGIS_API_KEY } : {}),
     ...(process.env.MAEGIS_TENANT_ID ? { "X-Tenant-ID": process.env.MAEGIS_TENANT_ID } : {}),
+    "X-User-ID": authenticatedEmail ?? process.env.MAEGIS_USER_ID ?? "local-analyst",
+    "X-User-Email": email,
+    "X-User-Name": authenticatedName ?? process.env.MAEGIS_USER_NAME ?? email,
+    "X-Role": role,
     ...extra,
   };
 }
@@ -57,10 +76,10 @@ export function toConsoleIncident(row: ApiIncident, brands: Map<string, string>)
   };
 }
 
-export async function fetchBrandMap() {
+export async function fetchBrandMap(request?: Request) {
   const url = backendUrl("/api/v1/brands");
   if (!url) return new Map<string, string>();
-  const response = await fetch(url, { headers: backendHeaders(), cache: "no-store", signal: AbortSignal.timeout(5000) });
+  const response = await fetch(url, { headers: backendHeaders(request), cache: "no-store", signal: AbortSignal.timeout(5000) });
   if (!response.ok) return new Map<string, string>();
   const rows = await response.json() as Array<{ id: string; name: string }>;
   return new Map(rows.map((row) => [row.id, row.name]));

@@ -9,6 +9,8 @@ from .models import AuditEvent, ProtectedBrand, SourceConnector
 CONNECTOR_DEFAULTS = {
     "certificate_transparency": (True, "configured"),
     "dns_candidates": (True, "configured"),
+    "rdap_candidates": (True, "configured"),
+    "urlscan": (True, "configured"),
     "urlhaus": (True, "configured"),
     "czds": (False, "credential_required"),
 }

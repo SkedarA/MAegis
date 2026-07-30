@@ -9,22 +9,27 @@ MAegis is an operational brand-abuse monitoring SaaS that discovers suspicious d
 The repository implements the first production-shaped vertical slice:
 
 - multi-tenant protected-brand onboarding with legitimate-interest confirmation;
-- targeted Certificate Transparency search, bounded DNS candidate scanning, URLhaus adapter, and streaming CZDS zone-file adapter;
-- IDNA normalization, Unicode confusable checks, edit distance, suspicious-token detection, deterministic scoring, and explicit score contributions;
+- targeted Certificate Transparency and passive urlscan metadata search, durably rotating DNS and RDAP candidate sweeps, URLhaus adapter, and streaming CZDS zone-file adapter;
+- IDNA normalization, Unicode confusable checks, edit distance, shared-hosting and deceptive-subdomain detection, registry-wildcard suppression, deterministic scoring, and explicit score contributions;
 - durable observations, candidates, incidents, evidence, connector checkpoints, audit events, and PostgreSQL jobs;
 - tenant-scoped incident APIs and an interactive analyst console;
 - API-backed incident evidence timelines, assignment, severity/status decisions, rationale capture, and audited triage;
 - RDAP enrichment jobs and a separately containerized page-capture utility with SSRF controls;
 - fail-soft A/AAAA/CNAME/MX/NS/TXT, RDAP, and TLS certificate enrichment with public-IP enforcement and deterministic rescoring;
 - Docker Compose, CI, unit tests, health checks, and operational documentation.
+- a hardened small-VM deployment profile with automatic TLS, internal-only PostgreSQL, resource limits, restart policies, durable worker heartbeats, and verified database backups.
 
-Live connectors are intentionally best effort. CZDS files require approved access, URLhaus requires an auth key, and the included CT search adapter should be replaced by a dedicated checkpointed CT monitor as volume grows.
+Generated lookalikes cover alternate TLDs, omissions, duplications, transpositions, keyboard substitutions and insertions, ASCII homoglyphs, vowel substitutions, affixes, pluralization, hyphenation, and brand-keyword combinations. Mutation families and TLDs are interleaved so the bounded pool remains diverse. Per-brand cursors fully rotate the pool instead of repeatedly scanning the same prefix. RDAP checks identify registrations before DNS or web content appears and emit only candidates inside the configurable freshness window (90 days by default).
+
+The near-zero-cost defaults generate at most 750 candidates per brand and check 20 RDAP candidates per selected brand per cycle. Tune `MAEGIS_MAX_GENERATED_CANDIDATES`, `MAEGIS_DISCOVERY_RDAP_BATCH_SIZE`, and `MAEGIS_FRESH_REGISTRATION_MAX_AGE_DAYS` to match the public RDAP service's limits. Registered domains without a usable registration event, old registrations, and unregistered candidates remain outside the fresh-registration incident path.
+
+Live connectors are intentionally best effort. CZDS files require approved access, URLhaus requires an auth key, public RDAP services enforce rate limits, and the included CT search adapter should be replaced by a dedicated checkpointed CT monitor as volume grows.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    CT["CT / CZDS / URLhaus"] --> DW["Discovery worker"]
+    CT["CT / urlscan / CZDS / URLhaus"] --> DW["Discovery worker"]
     DG["Generated candidates"] --> DW
     DW --> DE["Detection + scoring"]
     DE --> PG[("PostgreSQL")]
@@ -92,6 +97,8 @@ curl -X POST http://localhost:8000/api/v1/submissions \
 The response contains the normalized domain, risk, confidence, severity, detector version, and every score contribution.
 
 The enrichment worker stores each DNS, RDAP, and TLS result independently. Retrieve the evidence timeline with `GET /api/v1/incidents/{id}/evidence`. DNS records pointing to non-public space remain visible as evidence, but MAegis will not establish a TLS connection to those addresses.
+
+For an operational deployment, use `deploy/compose.production.yml` and follow [the operations runbook](docs/operations.md). The analyst console only displays a live-scanner state after the authenticated worker heartbeat proves a recent completed or running discovery cycle.
 
 ## Safety defaults
 

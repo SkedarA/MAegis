@@ -28,12 +28,22 @@ function evidenceSummary(item: EvidenceItem) {
 }
 
 function seededEvidence(incident: Incident): EvidenceItem[] {
-  return incident.signals.map((signal, index) => ({ id: `${incident.id}-${index}`, evidenceType: "Score Signal", source: "Rules Engine", payload: { explanation: signal }, rawHash: "demo", collectedAt: incident.firstSeen }));
+  const signals = incident.signals.map((signal, index) => ({ id: `${incident.id}-signal-${index}`, evidenceType: "Score Signal", source: "Rules Engine", payload: { explanation: signal }, rawHash: "demo", collectedAt: incident.firstSeen }));
+  const sources = (incident.references ?? []).map((reference, index) => ({ id: `${incident.id}-source-${index}`, evidenceType: "Source Record", source: reference.label, payload: { url: reference.url }, rawHash: "public-source", collectedAt: incident.firstSeen }));
+  return [...sources, ...signals];
 }
 
 function statusValue(status: IncidentStatus) {
   const value = status.toLowerCase().replaceAll(" ", "_");
   return value === "new" ? "investigating" : value;
+}
+
+function safeSourceUrl(value: unknown) {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" ? url.toString() : null;
+  } catch { return null; }
 }
 
 export function IncidentDetail({ incident, mode, onClose, onUpdated }: { incident: Incident; mode: "demo" | "live"; onClose: () => void; onUpdated: (incident: Incident) => void }) {
@@ -78,13 +88,13 @@ export function IncidentDetail({ incident, mode, onClose, onUpdated }: { inciden
     <h2>{incident.domain}</h2><p className="muted">{incident.brand} · observed {incident.age} ago</p>
     <div className="score-block"><div className="large-score">{incident.score}<span>/100</span></div><div><strong>Risk score</strong><span>Confidence {incident.confidence}%</span></div></div>
     <p className="summary">{incident.summary}</p>
-    <div className="detail-actions"><button className="primary-button" disabled={saving} onClick={() => submitTriage("investigating", "Analyst opened an investigation from the priority queue.")}>Start investigation</button><button className="secondary-button" onClick={() => document.getElementById("evidence-timeline")?.scrollIntoView({ behavior: "smooth" })}>View evidence</button></div>
+    <div className="detail-actions"><button className="primary-button" disabled={saving} onClick={() => submitTriage("investigating", "Analyst opened an investigation from the priority queue.")}>Start investigation</button><a className="secondary-button case-open-button" href={`/incidents/${encodeURIComponent(incident.id)}`} target="_blank" rel="noreferrer">Open workspace ↗</a></div>
 
     <section className="evidence-timeline" id="evidence-timeline">
       <h3>Evidence timeline <span>{evidence.length}</span></h3>
       {loading && <p className="timeline-message">Loading evidence…</p>}
       {!loading && evidence.length === 0 && <p className="timeline-message">No evidence has been collected yet.</p>}
-      <ol>{evidence.map((item) => <li key={item.id}><i /><div><div><strong>{item.evidenceType}</strong><time>{new Date(item.collectedAt).toLocaleString("en-GB")}</time></div><p>{evidenceSummary(item)}</p><span>{item.source} · sha256 {item.rawHash.slice(0, 10)}</span></div></li>)}</ol>
+      <ol>{evidence.map((item) => { const sourceUrl = safeSourceUrl(item.payload.url); return <li key={item.id}><i /><div><div><strong>{item.evidenceType}</strong><time>{new Date(item.collectedAt).toLocaleString("en-GB")}</time></div><p>{sourceUrl ? <a href={sourceUrl} target="_blank" rel="noreferrer">Open primary source ↗</a> : evidenceSummary(item)}</p><span>{item.source} · sha256 {item.rawHash.slice(0, 10)}</span></div></li>; })}</ol>
     </section>
 
     <form className="triage-form" onSubmit={(event) => { event.preventDefault(); submitTriage(); }}>

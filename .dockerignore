@@ -1,0 +1,17 @@
+.git
+work
+node_modules
+.pnpm-store
+dist
+.next
+.vinext
+data
+artifacts
+outputs
+backups
+.env
+.env.local
+.env.production
+**/__pycache__
+**/*.pyc
+*.tar.gz
