@@ -32,8 +32,16 @@ def should_create_incident(brand_canonical: str, signals: list[Signal], score: f
 
 
 def source_signals(payload: dict) -> list[Signal]:
+    signals: list[Signal] = []
     verdicts = payload.get("verdicts")
     overall = verdicts.get("overall") if isinstance(verdicts, dict) else None
     if isinstance(overall, dict) and overall.get("malicious") is True:
-        return [Signal("threat_feed_verdict", 1, 35, "Public urlscan metadata marked the observed page malicious")]
-    return []
+        signals.append(Signal("threat_feed_verdict", 1, 35, "Public urlscan metadata marked the observed page malicious"))
+    generation = payload.get("candidate_generation")
+    if isinstance(generation, dict) and generation.get("mutation"):
+        mutation = str(generation["mutation"]).replace("_", " ")
+        signals.append(Signal("generated_candidate", 1, 4, f"Generated lookalike matched the {mutation} permutation family"))
+    freshness = payload.get("fresh_registration")
+    if isinstance(freshness, dict) and isinstance(freshness.get("age_days"), int):
+        signals.append(Signal("fresh_registration_window", 1, 0, f"RDAP confirmed the generated candidate was registered {freshness['age_days']} days ago"))
+    return signals

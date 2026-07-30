@@ -3,7 +3,7 @@ import unicodedata
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-DETECTOR_VERSION = "rules-2.1"
+DETECTOR_VERSION = "rules-2.2"
 SUSPICIOUS_TOKENS = {
     "account", "auth", "billing", "delivery", "help", "id", "invoice", "login",
     "pay", "payment", "portal", "secure", "security", "signin", "support", "track",
@@ -25,6 +25,13 @@ KEYBOARD_NEIGHBORS = {
     "p": "ol", "q": "wa", "r": "edft", "s": "wedxza", "t": "rfgy",
     "u": "yhji", "v": "cfgb", "w": "qase", "x": "zsdc", "y": "tghu", "z": "asx",
 }
+ASCII_HOMOGLYPHS = {
+    "a": ("4",), "b": ("8",), "e": ("3",), "g": ("9",), "i": ("1", "l"),
+    "l": ("1", "i"), "m": ("rn",), "o": ("0",), "s": ("5",), "t": ("7",),
+    "w": ("vv",),
+}
+VOWELS = "aeiou"
+AFFIXES = ("get", "my", "online", "official")
 DEFAULT_CANDIDATE_TLDS = (
     "com", "ro", "net", "org", "eu", "co", "io", "info", "online", "site",
     "shop", "top", "app", "cloud",
@@ -193,6 +200,12 @@ def generate_candidate_variants(
     words = [canonical_brand(item) for item in re.findall(r"[A-Za-z0-9]+", brand_name) if canonical_brand(item)]
     if len(words) > 1:
         add("-".join(words), "word_boundary_hyphenation")
+        add("".join(words), "word_boundary_removal")
+
+    add(f"{brand}s", "pluralization")
+    for affix in AFFIXES:
+        add(f"{affix}-{brand}", "prefix_addition")
+        add(f"{brand}-{affix}", "suffix_addition")
 
     for i in range(len(brand)):
         add(brand[:i] + brand[i + 1 :], "character_omission")
@@ -203,6 +216,23 @@ def generate_candidate_variants(
         for replacement in KEYBOARD_NEIGHBORS.get(brand[i], ""):
             add(brand[:i] + replacement + brand[i + 1 :], "keyboard_substitution")
             add(brand[:i] + replacement + brand[i:], "keyboard_insertion")
+        for replacement in ASCII_HOMOGLYPHS.get(brand[i], ()):
+            add(brand[:i] + replacement + brand[i + 1 :], "ascii_homoglyph")
+        if brand[i] in VOWELS:
+            for replacement in VOWELS:
+                if replacement != brand[i]:
+                    add(brand[:i] + replacement + brand[i + 1 :], "vowel_substitution")
+
+    # Interleave mutation families so a bounded pool is not dominated by the
+    # first few keyword or keyboard variants.
+    by_mutation: dict[str, list[str]] = {}
+    for label, mutation in labels.items():
+        by_mutation.setdefault(mutation, []).append(label)
+    ordered_labels: list[tuple[str, str]] = []
+    for index in range(max((len(items) for items in by_mutation.values()), default=0)):
+        for mutation, items in by_mutation.items():
+            if index < len(items):
+                ordered_labels.append((items[index], mutation))
 
     variants: list[GeneratedCandidate] = []
     normalized_tlds = tuple(dict.fromkeys(tld.lower().strip(".") for tld in tlds if tld.strip(".")))
@@ -210,10 +240,11 @@ def generate_candidate_variants(
         variants.append(GeneratedCandidate(f"{brand}.{tld}", "tld_swap", brand))
         if len(variants) >= limit:
             return variants
-    # Sweep one TLD across every mutation before adding the next TLD. This keeps
-    # a small pool diverse instead of spending its entire budget on a few labels.
-    for tld in normalized_tlds:
-        for label, mutation in labels.items():
+    # Rotate TLD choice across the interleaved mutation families. Even a small
+    # budget therefore covers both mutation and suffix diversity.
+    for tld_offset in range(len(normalized_tlds)):
+        for index, (label, mutation) in enumerate(ordered_labels):
+            tld = normalized_tlds[(index + tld_offset) % len(normalized_tlds)]
             variants.append(GeneratedCandidate(f"{label}.{tld}", mutation, label))
             if len(variants) >= limit:
                 return variants

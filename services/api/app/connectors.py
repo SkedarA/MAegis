@@ -81,16 +81,35 @@ class DNSCandidateConnector(Connector):
 
 
 class RDAPRegistrationConnector(Connector):
-    """Checks bounded generated candidates for registration, including names with no DNS yet."""
+    """Emits freshly registered generated candidates, including names with no DNS yet."""
 
     name = "rdap_candidates"
+    version = "2.0"
+
+    def __init__(self, max_age_days: int = 90):
+        self.max_age_days = max(0, max_age_days)
 
     async def fetch(self, target: str, checkpoint: dict[str, Any]) -> tuple[list[ConnectorObservation], dict[str, Any]]:
         rdap = await fetch_rdap(target)
         next_checkpoint = {"last_domain": target, "last_poll": datetime.now(timezone.utc).isoformat()}
         if rdap.get("status") == "not_found":
             return [], next_checkpoint
-        payload = {"queried_domain": target, "rdap": rdap}
+        registered_at = rdap_registration_date(rdap)
+        if registered_at is None:
+            return [], {**next_checkpoint, "result": "registration_date_missing"}
+        age_seconds = (datetime.now(timezone.utc) - registered_at).total_seconds()
+        age_days = max(0, int(age_seconds // 86400))
+        if age_seconds < -86400 or age_days > self.max_age_days:
+            return [], {**next_checkpoint, "result": "outside_freshness_window", "registration_age_days": age_days}
+        payload = {
+            "queried_domain": target,
+            "rdap": rdap,
+            "fresh_registration": {
+                "registered_at": registered_at.isoformat(),
+                "age_days": age_days,
+                "window_days": self.max_age_days,
+            },
+        }
         return [self.observation(self.name, target, payload)], next_checkpoint
 
 
@@ -204,3 +223,18 @@ async def fetch_rdap(domain: str) -> dict[str, Any]:
         "entities": [{"handle": item.get("handle"), "roles": item.get("roles", [])} for item in data.get("entities", [])],
         "raw": data,
     }
+
+
+def rdap_registration_date(rdap: dict[str, Any]) -> datetime | None:
+    for event in rdap.get("events", []):
+        if event.get("eventAction") not in {"registration", "registered"}:
+            continue
+        value = event.get("eventDate")
+        if not isinstance(value, str):
+            continue
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None

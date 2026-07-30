@@ -39,6 +39,14 @@ class IncidentPolicyTests(unittest.TestCase):
         ]
         self.assertTrue(should_create_incident("electrica", signals, 45))
 
+    def test_generated_fresh_candidate_keeps_explainable_source_evidence(self):
+        signals = source_signals({
+            "candidate_generation": {"mutation": "ascii_homoglyph"},
+            "fresh_registration": {"age_days": 2, "window_days": 90},
+        })
+        self.assertEqual([signal.name for signal in signals], ["generated_candidate", "fresh_registration_window"])
+        self.assertIn("ascii homoglyph", signals[0].explanation)
+
 
 if __name__ == "__main__":
     unittest.main()

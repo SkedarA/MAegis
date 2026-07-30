@@ -19,7 +19,9 @@ The repository implements the first production-shaped vertical slice:
 - Docker Compose, CI, unit tests, health checks, and operational documentation.
 - a hardened small-VM deployment profile with automatic TLS, internal-only PostgreSQL, resource limits, restart policies, durable worker heartbeats, and verified database backups.
 
-Generated lookalikes cover alternate TLDs, omissions, duplications, transpositions, keyboard substitutions and insertions, hyphenation, and brand-keyword combinations. Per-brand cursors ensure the bounded pool is fully rotated instead of repeatedly scanning the same prefix. RDAP checks can identify a registration before DNS or web content appears.
+Generated lookalikes cover alternate TLDs, omissions, duplications, transpositions, keyboard substitutions and insertions, ASCII homoglyphs, vowel substitutions, affixes, pluralization, hyphenation, and brand-keyword combinations. Mutation families and TLDs are interleaved so the bounded pool remains diverse. Per-brand cursors fully rotate the pool instead of repeatedly scanning the same prefix. RDAP checks identify registrations before DNS or web content appears and emit only candidates inside the configurable freshness window (90 days by default).
+
+The near-zero-cost defaults generate at most 750 candidates per brand and check 20 RDAP candidates per selected brand per cycle. Tune `MAEGIS_MAX_GENERATED_CANDIDATES`, `MAEGIS_DISCOVERY_RDAP_BATCH_SIZE`, and `MAEGIS_FRESH_REGISTRATION_MAX_AGE_DAYS` to match the public RDAP service's limits. Registered domains without a usable registration event, old registrations, and unregistered candidates remain outside the fresh-registration incident path.
 
 Live connectors are intentionally best effort. CZDS files require approved access, URLhaus requires an auth key, public RDAP services enforce rate limits, and the included CT search adapter should be replaced by a dedicated checkpointed CT monitor as volume grows.
 

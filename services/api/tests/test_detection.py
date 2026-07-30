@@ -76,6 +76,14 @@ class DetectionTests(unittest.TestCase):
         mutation_types = {item.mutation for item in variants}
         self.assertTrue({"character_omission", "character_duplication", "adjacent_transposition", "keyboard_substitution"}.issubset(mutation_types))
 
+    def test_dnstwist_style_families_and_tld_diversity_are_bounded(self):
+        variants = generate_candidate_variants("Acme", tlds=("com", "ro", "net"), limit=120)
+        mutation_types = {item.mutation for item in variants}
+        suffixes = {item.domain.rsplit(".", 1)[-1] for item in variants}
+        self.assertTrue({"ascii_homoglyph", "vowel_substitution", "prefix_addition", "suffix_addition", "pluralization"}.issubset(mutation_types))
+        self.assertEqual(suffixes, {"com", "ro", "net"})
+        self.assertEqual(len(variants), len({item.domain for item in variants}))
+
 
 if __name__ == "__main__":
     unittest.main()

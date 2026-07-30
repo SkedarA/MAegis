@@ -19,10 +19,11 @@ class Settings(BaseSettings):
     ai_base_url: str | None = None
     ai_api_key: str | None = None
     ai_model: str = "local-model"
-    max_generated_candidates: int = 250
+    max_generated_candidates: int = 750
     discovery_brand_batch_size: int = 5
     discovery_dns_batch_size: int = 40
-    discovery_rdap_batch_size: int = 10
+    discovery_rdap_batch_size: int = 20
+    fresh_registration_max_age_days: int = 90
     discovery_poll_interval_seconds: int = 900
     worker_health_stale_seconds: int = 2400
     cors_origins: str = "http://localhost:3000"

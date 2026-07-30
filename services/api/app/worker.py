@@ -20,6 +20,7 @@ from .scoring import score_signals
 
 
 WORKER_NAME = "discovery"
+PERSISTENT_SOURCE_SIGNALS = {"threat_feed_verdict", "generated_candidate", "fresh_registration_window"}
 
 
 def update_worker_heartbeat(
@@ -128,12 +129,13 @@ def persist_finding(db, brand: ProtectedBrand, domain: str, source: str, raw_has
         db.add(BackgroundJob(tenant_id=brand.tenant_id, job_type="enrich_domain", payload={"incident_id": incident.id, "domain": ascii_domain}))
     else:
         current_signal_names = {signal.name for signal in signals}
-        retained_enrichment = [
+        retained_evidence = [
             Signal(contribution.signal, contribution.value, contribution.weight, contribution.explanation)
             for contribution in incident.contributions
-            if contribution.signal.startswith("enrichment.") and contribution.signal not in current_signal_names
+            if (contribution.signal.startswith("enrichment.") or contribution.signal in PERSISTENT_SOURCE_SIGNALS)
+            and contribution.signal not in current_signal_names
         ]
-        result = score_signals(signals + retained_enrichment, evidence_sources=2 if retained_enrichment else 1)
+        result = score_signals(signals + retained_evidence, evidence_sources=2 if retained_evidence else 1)
         incident.severity = Severity(result.severity)
         incident.risk_score = result.score
         incident.confidence = result.confidence
@@ -190,7 +192,13 @@ async def poll_live_sources() -> None:
                 if not is_official_domain(item.domain, brand.official_domains)
             ]
             await poll_generated_candidates(db, brand, DNSCandidateConnector(), variants, settings.discovery_dns_batch_size)
-            await poll_generated_candidates(db, brand, RDAPRegistrationConnector(), variants, settings.discovery_rdap_batch_size)
+            await poll_generated_candidates(
+                db,
+                brand,
+                RDAPRegistrationConnector(settings.fresh_registration_max_age_days),
+                variants,
+                settings.discovery_rdap_batch_size,
+            )
 
 
 async def poll_generated_candidates(
@@ -310,7 +318,13 @@ async def enrich_incident(db, job: BackgroundJob) -> None:
         raise ValueError("Incident is outside the job tenant")
     brand = db.get(ProtectedBrand, incident.brand_id)
     base_signals = analyze_domain(incident.domain, incident.domain, brand.name, brand.official_domains)
-    signals = base_signals + enrichment_signals(payloads["dns"], payloads["rdap"], payloads["tls"])
+    base_signal_names = {signal.name for signal in base_signals}
+    retained_source = [
+        Signal(contribution.signal, contribution.value, contribution.weight, contribution.explanation)
+        for contribution in incident.contributions
+        if contribution.signal in PERSISTENT_SOURCE_SIGNALS and contribution.signal not in base_signal_names
+    ]
+    signals = base_signals + retained_source + enrichment_signals(payloads["dns"], payloads["rdap"], payloads["tls"])
     result = score_signals(signals, evidence_sources=1 + len([payload for payload in payloads.values() if payload]))
     for contribution in list(incident.contributions):
         db.delete(contribution)
