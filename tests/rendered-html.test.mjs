@@ -48,6 +48,17 @@ test("dashboard analytics route has a safe unconfigured fallback", async () => {
   assert.deepEqual(await response.json(), { mode: "demo", dashboard: null });
 });
 
+test("domain monitoring route has a safe unconfigured fallback", async () => {
+  const response = await request("/api/monitoring");
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { mode: "demo", monitors: [], summary: null });
+});
+
+test("campaign intelligence route has a safe unconfigured fallback", async () => {
+  const response = await request("/api/intelligence");
+  assert.deepEqual(await response.json(), { mode: "demo", summary: null, campaigns: [], patterns: [] });
+});
+
 test("live queue labels do not claim detections are verified", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.match(page, /Unconfirmed detections waiting for first review/);
@@ -142,6 +153,8 @@ test("operational console routes render their dedicated workspaces", async () =>
     ["/team", "Analyst team"],
     ["/audit", "Audit trail"],
     ["/settings", "Operational settings"],
+    ["/monitoring", "Domain monitoring"],
+    ["/intelligence", "Campaign intelligence"],
   ]) {
     const response = await request(path);
     assert.equal(response.status, 200, path);
@@ -154,6 +167,7 @@ test("main dashboard contains portfolio filters and client analytics", async () 
   assert.match(page, /Filter the complete dashboard/);
   assert.match(page, /Incidents by protected brand/);
   assert.match(page, /Screenshots remain manual and opt-in/);
+  assert.match(page, /setInterval\(loadLiveState, 30000\)/);
 });
 
 test("operational read routes fail closed without the private API", async () => {

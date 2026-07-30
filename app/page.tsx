@@ -276,22 +276,24 @@ export default function Home() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch("/api/incidents", { signal: controller.signal })
+    const loadLiveState = () => { fetch("/api/incidents", { signal: controller.signal, cache: "no-store" })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error("API unavailable")))
       .then((payload: { mode: "demo" | "live"; incidents: Incident[] }) => {
         if (payload.mode === "live") {
           setIncidents(payload.incidents);
-          setSelected(payload.incidents[0] ?? null);
+          setSelected((current) => current ? payload.incidents.find((item) => item.id === current.id) ?? payload.incidents[0] ?? null : payload.incidents[0] ?? null);
           setDataMode("live");
         }
       })
       .catch(() => undefined);
-    fetch("/api/runtime", { signal: controller.signal })
+    fetch("/api/runtime", { signal: controller.signal, cache: "no-store" })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error("Runtime unavailable")))
       .then((payload: { mode: "demo" | "live"; worker: WorkerRuntime | null }) => {
         if (payload.mode === "live") setWorker(payload.worker);
       })
-      .catch(() => undefined);
+      .catch(() => undefined); };
+    loadLiveState();
+    const timer = window.setInterval(loadLiveState, 30000);
     fetch("/api/accounts", { signal: controller.signal })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error("Accounts unavailable")))
       .then((payload: { me: AnalystAccount | null }) => setMe(payload.me))
@@ -300,17 +302,19 @@ export default function Home() {
       .then((response) => response.ok ? response.json() : Promise.reject(new Error("Brands unavailable")))
       .then((payload: { brands: BrandChoice[] }) => { setBrands(payload.brands); setSubmissionBrandId(payload.brands[0]?.id ?? ""); })
       .catch(() => undefined);
-    return () => controller.abort();
+    return () => { window.clearInterval(timer); controller.abort(); };
   }, []);
 
   useEffect(() => {
     const controller = new AbortController();
     const days = timeFilter === "7 days" ? 7 : timeFilter === "30 days" ? 30 : timeFilter === "90 days" ? 90 : 0;
-    fetch(`/api/dashboard?days=${days}`, { signal: controller.signal })
+    const loadDashboard = () => fetch(`/api/dashboard?days=${days}`, { signal: controller.signal, cache: "no-store" })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error("Dashboard unavailable")))
       .then((payload: { mode: "demo" | "live"; dashboard: DashboardSummary | null }) => { if (payload.mode === "live") setDashboard(payload.dashboard); })
       .catch(() => undefined);
-    return () => controller.abort();
+    loadDashboard();
+    const timer = window.setInterval(loadDashboard, 30000);
+    return () => { window.clearInterval(timer); controller.abort(); };
   }, [timeFilter]);
 
   async function submitDomain() {
@@ -334,8 +338,11 @@ export default function Home() {
           <p className="nav-label">Monitor</p>
           <a className="nav-item active" href="#overview"><span>⌁</span>Overview</a>
           <a className="nav-item" href="#incidents"><span>◇</span>Incidents <b>{incidents.length}</b></a>
+          <Link className="nav-item" href="/monitoring"><span>◉</span>Domain monitoring</Link>
           <Link className="nav-item" href="/discovery"><span>◎</span>Discovery</Link>
           <Link className="nav-item" href="/brands"><span>◫</span>Protected brands</Link>
+          <p className="nav-label">Intelligence</p>
+          <Link className="nav-item" href="/intelligence"><span>⌘</span>Campaign intelligence</Link>
           <p className="nav-label">Operate</p>
           <Link className="nav-item" href="/team"><span>♙</span>Analyst team</Link>
           <Link className="nav-item" href="/audit"><span>▤</span>Audit log</Link>
@@ -386,7 +393,7 @@ export default function Home() {
         <section className="content-grid">
           <article className="panel incidents-panel" id="incidents">
             <div className="panel-heading"><div><p className="eyebrow">Prioritized analyst workflow</p><h2>{dataMode === "live" ? "Incident review queue" : "Real brand-abuse cases"}</h2></div><span className="queue-count">{visible.length} shown · risk ordered</span></div>
-            <div className="filters" role="group" aria-label="Filter incidents">{["All", "New", "Investigating", "Unassigned", "Critical", "Closed"].map((item) => <button key={item} className={filter === item ? "selected" : ""} onClick={() => setFilter(item)}>{item}{item === "All" && <span>{incidents.length}</span>}{item === "Unassigned" && <span>{queueStats.unassigned}</span>}</button>)}</div>
+            <div className="filters" role="group" aria-label="Filter incidents">{["All", "New", "Investigating", "Monitoring", "Unassigned", "Critical", "Closed"].map((item) => <button key={item} className={filter === item ? "selected" : ""} onClick={() => setFilter(item)}>{item}{item === "All" && <span>{incidents.length}</span>}{item === "Unassigned" && <span>{queueStats.unassigned}</span>}</button>)}</div>
             <div className="table-wrap">
               <table>
                 <thead><tr><th>Finding</th><th>Risk</th><th>Status</th><th>Owner</th><th>First seen</th></tr></thead>

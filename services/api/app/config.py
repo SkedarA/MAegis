@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     discovery_rdap_batch_size: int = 20
     fresh_registration_max_age_days: int = 90
     discovery_poll_interval_seconds: int = 900
+    monitor_default_interval_seconds: int = 21600
+    monitor_batch_size: int = 100
+    monitor_batches_per_cycle: int = 5
+    monitor_concurrency: int = 10
+    monitor_claim_seconds: int = 300
+    monitor_poll_interval_seconds: int = 60
     worker_health_stale_seconds: int = 2400
     cors_origins: str = "http://localhost:3000"
 

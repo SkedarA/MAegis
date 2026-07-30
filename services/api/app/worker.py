@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from .brand_schedule import select_brand_batch_at_cursor
 from .candidate_schedule import brand_checkpoint, fetch_candidate_batch, prioritized_rotating_batch, with_brand_checkpoint
+from .campaign_intelligence.graph import ingest_incident_public_evidence
 from .connectors import CZDSZoneConnector, CertificateTransparencyConnector, DNSCandidateConnector, RDAPRegistrationConnector, URLhausConnector, URLScanConnector, fetch_rdap
 from .config import get_settings
 from .database import Base, SessionLocal, engine
@@ -16,7 +17,8 @@ from .detection import DETECTOR_VERSION, GeneratedCandidate, Signal, analyze_dom
 from .enrichment import enrichment_signals, fetch_dns, fetch_tls
 from .incident_policy import should_create_incident, source_signals
 from .job_retry import retry_delay_seconds
-from .models import BackgroundJob, Candidate, EvidenceItem, Incident, IncidentStatus, Observation, ProtectedBrand, ScoreContribution, Severity, SourceConnector, WorkerHeartbeat
+from .models import AuditEvent, BackgroundJob, Candidate, DomainMonitor, EvidenceItem, Incident, IncidentStatus, Observation, ProtectedBrand, ScoreContribution, Severity, SourceConnector, WorkerHeartbeat
+from .monitoring import classify_snapshot, compact_snapshot, meaningful_changes, next_check_time, snapshot_hash
 from .scoring import score_signals
 from .suppression import AUTO_ALLOWLIST_RATIONALE
 
@@ -276,6 +278,8 @@ async def process_jobs() -> None:
                 await enrich_incident(db, job)
             elif job.job_type == "rescore_brand":
                 rescore_brand_incidents(db, job)
+            elif job.job_type == "rebuild_intelligence":
+                rebuild_intelligence(db, job)
             else:
                 raise ValueError(f"Unsupported background job type: {job.job_type}")
             job.status = "complete"
@@ -287,6 +291,130 @@ async def process_jobs() -> None:
             job.run_after = datetime.now(timezone.utc) + timedelta(seconds=retry_delay_seconds(job.attempts))
             job.payload = {**job.payload, "last_error": f"{type(exc).__name__}: {exc}"[:1000], "last_failed_at": datetime.now(timezone.utc).isoformat()}
             db.commit()
+
+
+def claim_due_monitors(limit: int, claim_seconds: int) -> list[dict]:
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        monitors = list(db.scalars(
+            select(DomainMonitor)
+            .where(DomainMonitor.state == "active", DomainMonitor.next_check_at <= now)
+            .with_for_update(skip_locked=True)
+            .order_by(DomainMonitor.next_check_at)
+            .limit(limit)
+        ))
+        claimed = [
+            {"id": item.id, "tenant_id": item.tenant_id, "incident_id": item.incident_id, "domain": item.domain}
+            for item in monitors
+        ]
+        for item in monitors:
+            item.next_check_at = now + timedelta(seconds=claim_seconds)
+        db.commit()
+        return claimed
+
+
+async def collect_monitor_snapshot(domain: str) -> dict:
+    dns_payload = await fetch_dns(domain)
+    rdap_payload = None
+    tls_payload = None
+    try:
+        rdap_payload = await fetch_rdap(domain)
+    except Exception:
+        pass
+    if dns_payload.get("all_addresses_public"):
+        try:
+            tls_payload = await fetch_tls(domain, dns_payload.get("resolved_addresses") or [])
+        except Exception:
+            pass
+    return compact_snapshot(dns_payload, rdap_payload, tls_payload)
+
+
+def persist_monitor_result(claim: dict, snapshot: dict | None, error: Exception | None) -> None:
+    now = datetime.now(timezone.utc)
+    settings = get_settings()
+    with SessionLocal() as db:
+        monitor = db.scalar(
+            select(DomainMonitor).where(
+                DomainMonitor.id == claim["id"], DomainMonitor.tenant_id == claim["tenant_id"]
+            ).with_for_update()
+        )
+        if not monitor or monitor.state != "active":
+            return
+        monitor.last_checked_at = now
+        monitor.check_count += 1
+        if error is not None or snapshot is None:
+            monitor.consecutive_failures += 1
+            if monitor.consecutive_failures >= 3:
+                monitor.classification = "error"
+            retry_seconds = min(monitor.interval_seconds, max(900, 300 * (2 ** min(monitor.consecutive_failures, 6))))
+            monitor.next_check_at = now + timedelta(seconds=retry_seconds)
+            db.commit()
+            return
+
+        current_hash = snapshot_hash(snapshot)
+        classification = classify_snapshot(snapshot)
+        previous = monitor.last_snapshot or {}
+        changes = meaningful_changes(previous, snapshot) if monitor.baseline_hash else []
+        monitor.classification = classification
+        monitor.consecutive_failures = 0
+        monitor.last_snapshot = snapshot
+        monitor.next_check_at = next_check_time(monitor.id, monitor.interval_seconds, now)
+        evidence_type = None
+        evidence_payload: dict = {}
+        if not monitor.baseline_hash:
+            monitor.baseline_hash = current_hash
+            evidence_type = "monitor_baseline"
+            evidence_payload = {"classification": classification, "snapshot": snapshot}
+        elif changes and current_hash != monitor.baseline_hash:
+            monitor.baseline_hash = current_hash
+            monitor.last_change_at = now
+            evidence_type = "monitor_change"
+            evidence_payload = {
+                "changes": changes, "previous_classification": classify_snapshot(previous),
+                "classification": classification, "before": previous, "after": snapshot,
+            }
+            incident = db.scalar(select(Incident).where(Incident.id == monitor.incident_id, Incident.tenant_id == monitor.tenant_id))
+            if incident and incident.status == IncidentStatus.MONITORING:
+                incident.status = IncidentStatus.NEW
+                incident.updated_at = now
+                incident.decision_rationale = "Monitoring detected a meaningful infrastructure change; analyst review required."
+            db.add(AuditEvent(
+                tenant_id=monitor.tenant_id, actor="worker:domain-monitor", action="monitor.change_detected",
+                resource_type="incident", resource_id=monitor.incident_id,
+                payload={"monitor_id": monitor.id, "domain": monitor.domain, "changes": changes, "classification": classification},
+            ))
+            queued = db.scalar(select(BackgroundJob.id).where(
+                BackgroundJob.tenant_id == monitor.tenant_id,
+                BackgroundJob.job_type == "enrich_domain",
+                BackgroundJob.status.in_(["queued", "running"]),
+                BackgroundJob.payload["incident_id"].as_string() == monitor.incident_id,
+            ))
+            if not queued:
+                db.add(BackgroundJob(tenant_id=monitor.tenant_id, job_type="enrich_domain", payload={"incident_id": monitor.incident_id, "domain": monitor.domain, "trigger": "monitor_change"}))
+        if evidence_type:
+            raw_hash = hashlib.sha256(json.dumps(evidence_payload, sort_keys=True, default=str).encode()).hexdigest()
+            db.add(EvidenceItem(tenant_id=monitor.tenant_id, incident_id=monitor.incident_id, evidence_type=evidence_type, source="domain_monitor", payload=evidence_payload, raw_hash=raw_hash))
+        db.commit()
+
+
+async def process_domain_monitors() -> int:
+    settings = get_settings()
+    claims = claim_due_monitors(settings.monitor_batch_size, settings.monitor_claim_seconds)
+    if not claims:
+        return 0
+    semaphore = asyncio.Semaphore(settings.monitor_concurrency)
+
+    async def collect(claim: dict) -> tuple[dict, dict | None, Exception | None]:
+        async with semaphore:
+            try:
+                return claim, await collect_monitor_snapshot(claim["domain"]), None
+            except Exception as exc:
+                return claim, None, exc
+
+    results = await asyncio.gather(*(collect(claim) for claim in claims))
+    for claim, snapshot, error in results:
+        persist_monitor_result(claim, snapshot, error)
+    return len(claims)
 
 
 def rescore_brand_incidents(db, job: BackgroundJob) -> None:
@@ -327,6 +455,12 @@ def rescore_brand_incidents(db, job: BackgroundJob) -> None:
         incident.summary = "; ".join(item.explanation for item in result.contributions)
         incident.detector_version = DETECTOR_VERSION
         incident.updated_at = datetime.now(timezone.utc)
+
+
+def rebuild_intelligence(db, job: BackgroundJob) -> None:
+    incidents = list(db.scalars(select(Incident).where(Incident.tenant_id == job.tenant_id).limit(2000)))
+    relation_count = sum(ingest_incident_public_evidence(db, incident) for incident in incidents)
+    job.payload = {**job.payload, "incidents_processed": len(incidents), "relations_processed": relation_count}
 
 
 def add_evidence(db, job: BackgroundJob, evidence_type: str, source: str, payload: dict) -> None:
@@ -403,6 +537,7 @@ async def enrich_incident(db, job: BackgroundJob) -> None:
     incident.severity = Severity(result.severity)
     incident.detector_version = DETECTOR_VERSION
     incident.updated_at = datetime.now(timezone.utc)
+    ingest_incident_public_evidence(db, incident)
 
 
 async def main() -> None:
@@ -410,6 +545,7 @@ async def main() -> None:
     settings = get_settings()
     instance_id = os.getenv("HOSTNAME") or socket.gethostname()
     cycle_count, brand_cursor = load_worker_progress()
+    next_discovery_at = datetime.now(timezone.utc)
     update_worker_heartbeat(instance_id, "starting", cycle_count=cycle_count, details={"brand_cursor": brand_cursor, "brand_batch_size": settings.discovery_brand_batch_size})
     while True:
         cycle_started_at = datetime.now(timezone.utc)
@@ -421,9 +557,18 @@ async def main() -> None:
             details={"brand_cursor": brand_cursor, "brand_batch_size": settings.discovery_brand_batch_size},
         )
         try:
-            brand_cursor = await poll_live_sources(brand_cursor)
+            now = datetime.now(timezone.utc)
+            if now >= next_discovery_at:
+                brand_cursor = await poll_live_sources(brand_cursor)
+                next_discovery_at = datetime.now(timezone.utc) + timedelta(seconds=settings.discovery_poll_interval_seconds)
             for _ in range(50):
                 await process_jobs()
+            monitored = 0
+            for _ in range(settings.monitor_batches_per_cycle):
+                batch_count = await process_domain_monitors()
+                monitored += batch_count
+                if batch_count < settings.monitor_batch_size:
+                    break
         except Exception as exc:
             update_worker_heartbeat(
                 instance_id,
@@ -431,7 +576,7 @@ async def main() -> None:
                 cycle_count=cycle_count,
                 last_error=f"{type(exc).__name__}: {exc}"[:1000],
             )
-            await asyncio.sleep(min(60, settings.discovery_poll_interval_seconds))
+            await asyncio.sleep(min(settings.monitor_poll_interval_seconds, settings.discovery_poll_interval_seconds))
             continue
         cycle_count += 1
         update_worker_heartbeat(
@@ -439,9 +584,9 @@ async def main() -> None:
             "healthy",
             cycle_completed_at=datetime.now(timezone.utc),
             cycle_count=cycle_count,
-            details={"brand_cursor": brand_cursor, "brand_batch_size": settings.discovery_brand_batch_size},
+            details={"brand_cursor": brand_cursor, "brand_batch_size": settings.discovery_brand_batch_size, "monitors_checked": monitored},
         )
-        await asyncio.sleep(settings.discovery_poll_interval_seconds)
+        await asyncio.sleep(min(settings.monitor_poll_interval_seconds, settings.discovery_poll_interval_seconds))
 
 
 if __name__ == "__main__":

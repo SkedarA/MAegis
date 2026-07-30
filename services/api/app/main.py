@@ -1,6 +1,6 @@
 import hashlib
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +8,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from .brand_catalog import get_catalog
+from .campaign_intelligence import models as intelligence_models
+from .campaign_intelligence.api import router as intelligence_router
 from .brand_enrollment import enroll_catalog
 from .config import get_settings
 from .correlation import correlation_reason, evidence_correlation_keys
@@ -15,10 +17,10 @@ from .database import Base, engine, get_db
 from .dashboard import build_dashboard_summary
 from .detection import DETECTOR_VERSION, analyze_domain, canonical_brand, is_official_domain, normalize_domain
 from .domain_context import build_domain_context
-from .models import AnalystAccount, AuditEvent, BackgroundJob, Candidate, DomainContextOverride, EvidenceItem, Incident, IncidentNote, IncidentStatus, Observation, OfficialAsset, ProtectedBrand, ProtectedBrandArchive, ScoreContribution, Severity, SourceConnector, WorkerHeartbeat
+from .models import AnalystAccount, AuditEvent, BackgroundJob, Candidate, DomainContextOverride, DomainMonitor, EvidenceItem, Incident, IncidentNote, IncidentStatus, Observation, OfficialAsset, ProtectedBrand, ProtectedBrandArchive, ScoreContribution, Severity, SourceConnector, WorkerHeartbeat
 from .official_assets import normalize_official_asset
 from .runtime_health import worker_is_fresh
-from .schemas import AIAnalysisView, AnalystCreate, AnalystUpdate, AnalystView, AssignmentUpdate, AuditEventView, BrandArchiveCreate, BrandCreate, BrandUpdate, BrandView, CatalogBrandView, CatalogEnrollmentCreate, CatalogEnrollmentView, ConnectorUpdate, DomainContextOverrideUpdate, EvidenceView, IncidentNoteCreate, IncidentNoteView, IncidentView, OfficialAssetCreate, OfficialAssetView, SubmissionCreate, TriageUpdate
+from .schemas import AIAnalysisView, AnalystCreate, AnalystUpdate, AnalystView, AssignmentUpdate, AuditEventView, BrandArchiveCreate, BrandCreate, BrandUpdate, BrandView, CatalogBrandView, CatalogEnrollmentCreate, CatalogEnrollmentView, ConnectorUpdate, DomainContextOverrideUpdate, EvidenceView, IncidentNoteCreate, IncidentNoteView, IncidentView, MonitorUpdate, OfficialAssetCreate, OfficialAssetView, SubmissionCreate, TriageUpdate
 from .scoring import score_signals
 from .security import Principal, require_administrator, require_analyst, require_principal
 from .suppression import AUTO_ALLOWLIST_RATIONALE
@@ -41,6 +43,7 @@ app = FastAPI(
 )
 cors_origins = [item.strip() for item in settings.cors_origins.split(",") if item.strip()]
 app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.include_router(intelligence_router)
 
 
 def audit(db: Session, principal: Principal, action: str, resource_type: str, resource_id: str, payload: dict | None = None) -> None:
@@ -640,9 +643,113 @@ def triage_incident(incident_id: str, payload: TriageUpdate, db: Session = Depen
     incident.assigned_to = payload.assigned_to
     incident.decision_rationale = payload.rationale
     incident.updated_at = datetime.now(timezone.utc)
+    monitor = db.scalar(select(DomainMonitor).where(DomainMonitor.incident_id == incident.id, DomainMonitor.tenant_id == principal.tenant_id))
+    if incident.status == IncidentStatus.MONITORING:
+        if monitor is None:
+            monitor = DomainMonitor(
+                tenant_id=principal.tenant_id,
+                incident_id=incident.id,
+                brand_id=incident.brand_id,
+                domain=incident.domain,
+                interval_seconds=settings.monitor_default_interval_seconds,
+                next_check_at=datetime.now(timezone.utc),
+            )
+            db.add(monitor)
+        else:
+            monitor.state = "active"
+            monitor.next_check_at = min(monitor.next_check_at, datetime.now(timezone.utc))
+    elif monitor is not None:
+        monitor.state = "paused"
     audit(db, principal, "incident.triaged", "incident", incident.id, {"from": previous, "to": payload.status, "rationale": payload.rationale})
     db.commit()
     return incident
+
+
+def monitor_payload(monitor: DomainMonitor, incident: Incident, brand: ProtectedBrand) -> dict:
+    return {
+        "id": monitor.id, "incident_id": monitor.incident_id, "brand_id": monitor.brand_id,
+        "brand_name": brand.name, "domain": monitor.domain, "state": monitor.state,
+        "classification": monitor.classification, "interval_seconds": monitor.interval_seconds,
+        "next_check_at": monitor.next_check_at, "last_checked_at": monitor.last_checked_at,
+        "last_change_at": monitor.last_change_at, "consecutive_failures": monitor.consecutive_failures,
+        "check_count": monitor.check_count, "incident_status": incident.status.value,
+        "severity": incident.severity.value, "risk_score": incident.risk_score,
+        "created_at": monitor.created_at, "updated_at": monitor.updated_at,
+    }
+
+
+@app.get("/api/v1/monitors")
+def list_monitors(
+    state: str | None = None,
+    classification: str | None = None,
+    query: str | None = None,
+    limit: int = Query(default=500, ge=1, le=2000),
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require_principal),
+) -> list[dict]:
+    statement = (
+        select(DomainMonitor, Incident, ProtectedBrand)
+        .join(Incident, Incident.id == DomainMonitor.incident_id)
+        .join(ProtectedBrand, ProtectedBrand.id == DomainMonitor.brand_id)
+        .where(DomainMonitor.tenant_id == principal.tenant_id)
+    )
+    if state:
+        statement = statement.where(DomainMonitor.state == state)
+    if classification:
+        statement = statement.where(DomainMonitor.classification == classification)
+    if query:
+        pattern = f"%{query.strip().lower()}%"
+        statement = statement.where(func.lower(DomainMonitor.domain).like(pattern) | func.lower(ProtectedBrand.name).like(pattern))
+    rows = db.execute(statement.order_by(DomainMonitor.next_check_at, DomainMonitor.domain).limit(limit)).all()
+    return [monitor_payload(monitor, incident, brand) for monitor, incident, brand in rows]
+
+
+@app.get("/api/v1/monitors/summary")
+def monitor_summary(db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> dict:
+    now = datetime.now(timezone.utc)
+    base = [DomainMonitor.tenant_id == principal.tenant_id]
+    classifications = db.execute(select(DomainMonitor.classification, func.count(DomainMonitor.id)).where(*base).group_by(DomainMonitor.classification)).all()
+    return {
+        "total": db.scalar(select(func.count(DomainMonitor.id)).where(*base)) or 0,
+        "active": db.scalar(select(func.count(DomainMonitor.id)).where(*base, DomainMonitor.state == "active")) or 0,
+        "due": db.scalar(select(func.count(DomainMonitor.id)).where(*base, DomainMonitor.state == "active", DomainMonitor.next_check_at <= now)) or 0,
+        "changed_24h": db.scalar(select(func.count(DomainMonitor.id)).where(*base, DomainMonitor.last_change_at >= now - timedelta(hours=24))) or 0,
+        "failing": db.scalar(select(func.count(DomainMonitor.id)).where(*base, DomainMonitor.consecutive_failures > 0)) or 0,
+        "by_classification": {name: count for name, count in classifications},
+    }
+
+
+@app.patch("/api/v1/monitors/{monitor_id}")
+def update_monitor(monitor_id: str, payload: MonitorUpdate, db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> dict:
+    require_analyst(principal)
+    monitor = db.scalar(select(DomainMonitor).where(DomainMonitor.id == monitor_id, DomainMonitor.tenant_id == principal.tenant_id))
+    if not monitor:
+        raise HTTPException(status_code=404, detail="Domain monitor not found")
+    before = {"state": monitor.state, "interval_seconds": monitor.interval_seconds}
+    if payload.state is not None:
+        monitor.state = payload.state
+        if payload.state == "active":
+            monitor.next_check_at = min(monitor.next_check_at, datetime.now(timezone.utc))
+    if payload.interval_seconds is not None:
+        monitor.interval_seconds = payload.interval_seconds
+    audit(db, principal, "monitor.updated", "domain_monitor", monitor.id, {"before": before, "after": {"state": monitor.state, "interval_seconds": monitor.interval_seconds}})
+    db.commit()
+    incident = db.get(Incident, monitor.incident_id)
+    brand = db.get(ProtectedBrand, monitor.brand_id)
+    return monitor_payload(monitor, incident, brand)
+
+
+@app.post("/api/v1/monitors/{monitor_id}/check", status_code=202)
+def check_monitor_now(monitor_id: str, db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> dict:
+    require_analyst(principal)
+    monitor = db.scalar(select(DomainMonitor).where(DomainMonitor.id == monitor_id, DomainMonitor.tenant_id == principal.tenant_id))
+    if not monitor:
+        raise HTTPException(status_code=404, detail="Domain monitor not found")
+    monitor.state = "active"
+    monitor.next_check_at = datetime.now(timezone.utc)
+    audit(db, principal, "monitor.check_requested", "domain_monitor", monitor.id, {"domain": monitor.domain})
+    db.commit()
+    return {"id": monitor.id, "status": "queued", "next_check_at": monitor.next_check_at}
 
 
 @app.post("/api/v1/incidents/{incident_id}/ai-analysis", response_model=AIAnalysisView)
@@ -763,6 +870,9 @@ def safe_settings(_: Principal = Depends(require_principal)) -> dict:
         "discovery_rdap_batch_size": current.discovery_rdap_batch_size,
         "fresh_registration_max_age_days": current.fresh_registration_max_age_days,
         "discovery_poll_interval_seconds": current.discovery_poll_interval_seconds,
+        "monitor_default_interval_seconds": current.monitor_default_interval_seconds,
+        "monitor_batch_size": current.monitor_batch_size,
+        "monitor_concurrency": current.monitor_concurrency,
         "worker_health_stale_seconds": current.worker_health_stale_seconds,
     }
 

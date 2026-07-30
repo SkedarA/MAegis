@@ -2,6 +2,8 @@
 
 MAegis is an operational brand-abuse monitoring SaaS that discovers suspicious domains, produces reproducible evidence and risk scores, and gives analysts a structured triage queue. It is designed as a master's thesis and public engineering portfolio without pretending that a solo deployment has commercial passive-DNS coverage.
 
+The separately bounded **Campaign Intelligence** module normalizes public DNS, TLS and registration evidence into a global infrastructure graph. Deterministic rules suppress generic shared-provider links, build campaign clusters only from strong relations, and calculate protected-brand relevance in tenant-scoped records. Global findings remain intelligence until they are relevant to a protected brand or explicitly promoted by an analyst.
+
 ![MAegis social preview](public/og.png)
 
 ## Current milestone
@@ -12,6 +14,7 @@ The repository implements the first production-shaped vertical slice:
 - targeted Certificate Transparency and passive urlscan metadata search, durably rotating DNS and RDAP candidate sweeps, URLhaus adapter, and streaming CZDS zone-file adapter;
 - IDNA normalization, Unicode confusable checks, edit distance, shared-hosting and deceptive-subdomain detection, registry-wildcard suppression, deterministic scoring, and explicit score contributions;
 - durable observations, candidates, incidents, evidence, connector checkpoints, audit events, and PostgreSQL jobs;
+- durable parked/inactive-domain watches with jittered DNS, RDAP, and TLS rechecks, bounded snapshot storage, and automatic return-to-review when infrastructure changes;
 - tenant-scoped incident APIs and an interactive analyst console;
 - API-backed incident evidence timelines, assignment, severity/status decisions, rationale capture, and audited triage;
 - evidence-ranked hosting and registrar attribution from platform suffixes, DNS, urlscan network metadata, and nested RDAP contacts, with audited analyst overrides;
@@ -77,6 +80,10 @@ curl -X POST http://localhost:8000/api/v1/brands \
 The discovery worker polls enrolled brands and retains only relevant observations. Put approved `*.zone.gz` files under `data/czds/`; full zone contents are streamed and are not inserted into PostgreSQL.
 
 The **Protected brands** panel manages the live monitoring portfolio in PostgreSQL. Analysts can pause monitoring and maintain tenant-scoped allowlist assets as base domains, exact subdomains, or descendant-only wildcards. Administrators can archive a brand with a required rationale; MAegis removes it from active monitoring but preserves its incidents, evidence, and audit history.
+
+The **Domain monitoring** console is for parked, dormant, or currently inactive typosquats. Put a case into the `monitoring` state to create a durable watch. The worker claims due rows with `FOR UPDATE SKIP LOCKED`, checks them concurrently in bounded batches, and adds incident evidence only for the first baseline or a meaningful DNS/RDAP/TLS change. Unchanged checks overwrite the compact current snapshot instead of creating an unbounded history table. Stable per-domain jitter spreads checks across the interval, allowing multiple workers to process thousands of watches without a thundering herd. A changed domain returns to `new` for human review and receives a normal enrichment job; it is never automatically declared malicious.
+
+Default watch policy: 100 domains per batch, up to five batches per minute, 10 concurrent network checks, and a six-hour per-domain cadence. Discovery sources retain their separate 15-minute cadence. Configure these through `MAEGIS_MONITOR_BATCH_SIZE`, `MAEGIS_MONITOR_BATCHES_PER_CYCLE`, `MAEGIS_MONITOR_CONCURRENCY`, `MAEGIS_MONITOR_POLL_INTERVAL_SECONDS`, and `MAEGIS_MONITOR_DEFAULT_INTERVAL_SECONDS`. Monitoring never captures screenshots or visits page content.
 
 ### Enroll the Romanian operational catalog
 

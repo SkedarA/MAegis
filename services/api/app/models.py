@@ -234,6 +234,38 @@ class BackgroundJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class DomainMonitor(Base):
+    """Compact durable schedule for long-lived domain watches.
+
+    Poll results overwrite ``last_snapshot``; only baselines and meaningful changes
+    are copied into the incident evidence timeline, keeping storage bounded.
+    """
+
+    __tablename__ = "domain_monitors"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "incident_id", name="uq_domain_monitor_incident"),
+        Index("ix_domain_monitor_due", "state", "next_check_at", "tenant_id"),
+        Index("ix_domain_monitor_tenant_class", "tenant_id", "classification"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id"), nullable=False, index=True)
+    brand_id: Mapped[str] = mapped_column(ForeignKey("protected_brands.id"), nullable=False, index=True)
+    domain: Mapped[str] = mapped_column(String(253), nullable=False, index=True)
+    state: Mapped[str] = mapped_column(String(20), default="active")
+    classification: Mapped[str] = mapped_column(String(40), default="unknown")
+    interval_seconds: Mapped[int] = mapped_column(Integer, default=21600)
+    next_check_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_change_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
+    check_count: Mapped[int] = mapped_column(Integer, default=0)
+    baseline_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class WorkerHeartbeat(Base):
     __tablename__ = "worker_heartbeats"
     worker_name: Mapped[str] = mapped_column(String(80), primary_key=True)
