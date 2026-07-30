@@ -1,6 +1,7 @@
 import unittest
 import sys
 import types
+from types import SimpleNamespace
 from unittest.mock import patch
 
 try:
@@ -17,7 +18,7 @@ except ModuleNotFoundError:
     config_stub.get_settings = lambda: None
     sys.modules["app.config"] = config_stub
 
-from app.connectors import RDAPRegistrationConnector, URLScanConnector
+from app.connectors import CertificateTransparencyConnector, RDAPRegistrationConnector, URLScanConnector
 
 
 class FakeResponse:
@@ -76,6 +77,34 @@ class URLScanConnectorTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(item.payload["scan_url"].startswith("https://urlscan.io/result/") for item in observations))
         self.assertTrue(all(item.payload["page_asnname"] == "CLOUDFLARENET" for item in observations))
         replay, _ = await connector.fetch("fancourier", checkpoint)
+        self.assertEqual(replay, [])
+
+
+class CTFakeResponse:
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return [
+            {"id": 41, "name_value": "login-acme.example\nsupport-acme.example", "entry_timestamp": "2026-07-30T08:00:00Z"},
+            {"id": 40, "name_value": "old-acme.example", "entry_timestamp": "2026-07-29T08:00:00Z"},
+        ]
+
+
+class CTFakeClient(FakeClient):
+    async def get(self, url, params):
+        return CTFakeResponse()
+
+
+class CertificateTransparencyTests(unittest.IsolatedAsyncioTestCase):
+    @patch("app.connectors.get_settings", lambda: SimpleNamespace(ct_search_url="https://ct.example.test"))
+    @patch("app.connectors.httpx.AsyncClient", CTFakeClient)
+    async def test_uses_monotonic_checkpoint_and_domain_specific_hashes(self):
+        observations, checkpoint = await CertificateTransparencyConnector().fetch("acme", {"last_entry_id": 40})
+        self.assertEqual([item.domain for item in observations], ["login-acme.example", "support-acme.example"])
+        self.assertEqual(checkpoint["last_entry_id"], 41)
+        self.assertEqual(len({item.raw_hash for item in observations}), 2)
+        replay, _ = await CertificateTransparencyConnector().fetch("acme", checkpoint)
         self.assertEqual(replay, [])
 
 

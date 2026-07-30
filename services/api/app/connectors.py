@@ -41,6 +41,7 @@ class Connector(ABC):
 
 class CertificateTransparencyConnector(Connector):
     name = "certificate_transparency"
+    version = "2.0"
 
     async def fetch(self, target: str, checkpoint: dict[str, Any]) -> tuple[list[ConnectorObservation], dict[str, Any]]:
         settings = get_settings()
@@ -50,19 +51,26 @@ class CertificateTransparencyConnector(Connector):
             response.raise_for_status()
         rows = response.json()
         seen = set(checkpoint.get("seen", []))
+        last_entry_id = int(checkpoint.get("last_entry_id", 0))
+        maximum_entry_id = last_entry_id
         observations: list[ConnectorObservation] = []
-        for row in rows[:1000]:
+        ordered_rows = sorted(rows[:1000], key=lambda row: int(row.get("id") or row.get("min_cert_id") or 0))
+        for row in ordered_rows:
+            entry_id = int(row.get("id") or row.get("min_cert_id") or 0)
+            if entry_id and entry_id <= last_entry_id:
+                continue
+            maximum_entry_id = max(maximum_entry_id, entry_id)
             for value in str(row.get("name_value", "")).splitlines():
                 candidate = value.removeprefix("*.").strip()
-                if target.lower() not in candidate.lower() or candidate in seen:
+                if target.lower() not in candidate.lower() or (not entry_id and candidate in seen):
                     continue
                 try:
                     domain, _ = normalize_domain(candidate)
                 except ValueError:
                     continue
-                observations.append(self.observation(self.name, domain, row))
+                observations.append(self.observation(self.name, domain, {**row, "observed_domain": domain}))
                 seen.add(domain)
-        next_checkpoint = {"seen": sorted(seen)[-3000:], "last_poll": datetime.now(timezone.utc).isoformat()}
+        next_checkpoint = {"last_entry_id": maximum_entry_id, "seen": sorted(seen)[-500:], "last_poll": datetime.now(timezone.utc).isoformat()}
         return observations, next_checkpoint
 
 
@@ -176,6 +184,7 @@ class URLScanConnector(Connector):
                     "page_country": page.get("country"),
                     "observed_at": task.get("time"),
                     "verdicts": row.get("verdicts") or {},
+                    "observed_domain": domain,
                 }
                 observations.append(self.observation(self.name, domain, evidence, url=task.get("url")))
                 seen.add(key)

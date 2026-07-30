@@ -42,6 +42,12 @@ test("runtime route fails closed when the private worker is unconfigured", async
   assert.deepEqual(await response.json(), { mode: "demo", worker: null });
 });
 
+test("dashboard analytics route has a safe unconfigured fallback", async () => {
+  const response = await request("/api/dashboard?days=30");
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { mode: "demo", dashboard: null });
+});
+
 test("live queue labels do not claim detections are verified", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.match(page, /Unconfirmed detections waiting for first review/);
@@ -94,6 +100,13 @@ test("protected-brand and whitelist mutations fail closed without the private AP
   }
 });
 
+test("correlation is empty and evidence export fails closed without the private API", async () => {
+  const related = await request("/api/incidents/demo/related");
+  assert.deepEqual(await related.json(), { mode: "demo", related: [] });
+  const bundle = await request("/api/incidents/demo/export");
+  assert.equal(bundle.status, 409);
+});
+
 test("triage route refuses mutations without a private API", async () => {
   const response = await request("/api/incidents/demo/triage", {
     method: "POST",
@@ -134,6 +147,13 @@ test("operational console routes render their dedicated workspaces", async () =>
     assert.equal(response.status, 200, path);
     assert.match(await response.text(), new RegExp(title, "i"), path);
   }
+});
+
+test("main dashboard contains portfolio filters and client analytics", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /Filter the complete dashboard/);
+  assert.match(page, /Incidents by protected brand/);
+  assert.match(page, /Screenshots remain manual and opt-in/);
 });
 
 test("operational read routes fail closed without the private API", async () => {

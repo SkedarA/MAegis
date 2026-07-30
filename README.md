@@ -112,6 +112,10 @@ For an operational deployment, use `deploy/compose.production.yml` and follow [t
 - Redirects and subresources are validated independently.
 - Capture does not enter credentials, submit forms, accept downloads, or preserve sessions.
 - Detection is evidence, not an accusation. Analyst confirmation and takedown remain manual.
+- Screenshot capture remains disabled by default and is never scheduled for every incident. When enabled, analysts request individual captures only when visual evidence justifies local storage use.
+- The overview dashboard separates incidents by protected client and supports client, severity, ownership, time-window, score, search, and ordering filters.
+- Adding an official asset suppresses matching unreviewed incidents and queues versioned rescoring; removing an asset queues reevaluation so automatically suppressed findings can reopen.
+- Case workspaces correlate shared IPs, nameservers, mail servers, certificates, ASNs, and favicon hashes, and can export an audited JSON evidence bundle without screenshot binaries.
 - Tenant scope is applied server-side to operational queries.
 
 Read [the architecture decisions](docs/architecture.md), [threat model](docs/threat-model.md), and [operations runbook](docs/operations.md) before enabling live monitoring.

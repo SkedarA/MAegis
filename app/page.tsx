@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { IncidentDetail } from "./incident-detail";
-import type { AnalystAccount, Incident } from "./incident-types";
+import type { AnalystAccount, DashboardSummary, Incident } from "./incident-types";
 
 const seededIncidents: Incident[] = [
   {
@@ -166,6 +166,13 @@ type WorkerRuntime = {
 
 type BrandChoice = { id: string; name: string };
 
+const OPEN_STATUSES = new Set(["New", "Investigating", "Likely Abuse", "Confirmed", "Monitoring"]);
+
+function incidentTimestamp(value: string) {
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
 function severityClass(severity: Incident["severity"]) {
   return `severity severity-${severity.toLowerCase()}`;
 }
@@ -174,32 +181,52 @@ export default function Home() {
   const [incidents, setIncidents] = useState<Incident[]>(seededIncidents);
   const [dataMode, setDataMode] = useState<"demo" | "live">("demo");
   const [worker, setWorker] = useState<WorkerRuntime | null>(null);
+  const [dashboard, setDashboard] = useState<DashboardSummary | null>(null);
   const [filter, setFilter] = useState("All");
   const [query, setQuery] = useState("");
+  const [clientFilter, setClientFilter] = useState("All clients");
+  const [severityFilter, setSeverityFilter] = useState("All severities");
+  const [ownerFilter, setOwnerFilter] = useState("All ownership");
+  const [timeFilter, setTimeFilter] = useState("All time");
+  const [minimumRisk, setMinimumRisk] = useState(0);
+  const [sortMode, setSortMode] = useState("Risk priority");
   const [selected, setSelected] = useState<Incident | null>(seededIncidents[0]);
   const [showSubmission, setShowSubmission] = useState(false);
   const [me, setMe] = useState<AnalystAccount | null>(null);
   const [brands, setBrands] = useState<BrandChoice[]>([]);
   const [submissionBrandId, setSubmissionBrandId] = useState("");
   const [submissionValue, setSubmissionValue] = useState("");
-  const [submissionCapture, setSubmissionCapture] = useState(false);
   const [submissionFeedback, setSubmissionFeedback] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const clientNames = useMemo(() => [...new Set([...brands.map((brand) => brand.name), ...incidents.map((incident) => incident.brand)])].sort(), [brands, incidents]);
+
+  const scopedIncidents = useMemo(() => incidents.filter((incident) => {
+    const queryText = query.trim().toLowerCase();
+    const matchesQuery = !queryText || `${incident.domain} ${incident.brand} ${incident.source} ${incident.assignedTo ?? ""} ${incident.signals.join(" ")}`.toLowerCase().includes(queryText);
+    const matchesClient = clientFilter === "All clients" || incident.brand === clientFilter;
+    const matchesSeverity = severityFilter === "All severities" || incident.severity === severityFilter;
+    const matchesOwner = ownerFilter === "All ownership"
+      || (ownerFilter === "Unassigned" ? !incident.assignedTo : ownerFilter === "Assigned" ? Boolean(incident.assignedTo) : incident.assignedTo === me?.email);
+    const days = timeFilter === "7 days" ? 7 : timeFilter === "30 days" ? 30 : timeFilter === "90 days" ? 90 : 0;
+    const matchesTime = !days || incidentTimestamp(incident.firstSeen) >= Date.now() - days * 86400000;
+    return matchesQuery && matchesClient && matchesSeverity && matchesOwner && matchesTime && incident.score >= minimumRisk;
+  }), [incidents, query, clientFilter, severityFilter, ownerFilter, me?.email, timeFilter, minimumRisk]);
+
   const queueStats = useMemo(() => {
-    const open = incidents.filter((incident) => !["Closed", "False Positive"].includes(incident.status));
+    const open = scopedIncidents.filter((incident) => OPEN_STATUSES.has(incident.status));
     return {
       newCount: open.filter((incident) => incident.status === "New").length,
       investigating: open.filter((incident) => incident.status === "Investigating").length,
       critical: open.filter((incident) => incident.severity === "Critical").length,
       unassigned: open.filter((incident) => !incident.assignedTo).length,
-      brands: new Set(incidents.map((incident) => incident.brand)).size,
+      brands: new Set(scopedIncidents.map((incident) => incident.brand)).size,
     };
-  }, [incidents]);
+  }, [scopedIncidents]);
 
   const brandCoverage = useMemo(() => {
     const grouped = new Map<string, { count: number; open: number; maxRisk: number }>();
-    for (const incident of incidents) {
+    for (const incident of scopedIncidents) {
       const current = grouped.get(incident.brand) ?? { count: 0, open: 0, maxRisk: 0 };
       current.count += 1;
       current.open += ["Closed", "False Positive"].includes(incident.status) ? 0 : 1;
@@ -207,16 +234,45 @@ export default function Home() {
       grouped.set(incident.brand, current);
     }
     return [...grouped.entries()].sort((left, right) => right[1].maxRisk - left[1].maxRisk).slice(0, 6);
-  }, [incidents]);
+  }, [scopedIncidents]);
+
+  const severityBreakdown = useMemo(() => {
+    const values = ["Critical", "High", "Medium", "Low", "Informational"].map((severity) => ({ severity, count: scopedIncidents.filter((incident) => incident.severity === severity).length }));
+    const total = Math.max(1, scopedIncidents.length);
+    let cursor = 0;
+    const colors: Record<string, string> = { Critical: "#b94f41", High: "#df8a43", Medium: "#a4ae71", Low: "#8ba58a", Informational: "#c8cbc2" };
+    const stops = values.map((item) => { const start = cursor; cursor += item.count / total * 100; return `${colors[item.severity]} ${start}% ${cursor}%`; });
+    return { values, gradient: scopedIncidents.length ? `conic-gradient(${stops.join(",")})` : "conic-gradient(#e1e3dc 0 100%)" };
+  }, [scopedIncidents]);
+
+  const clientBreakdown = useMemo(() => {
+    const grouped = new Map<string, { total: number; open: number; critical: number; high: number; medium: number; maxRisk: number }>();
+    for (const incident of scopedIncidents) {
+      const current = grouped.get(incident.brand) ?? { total: 0, open: 0, critical: 0, high: 0, medium: 0, maxRisk: 0 };
+      current.total += 1; current.open += OPEN_STATUSES.has(incident.status) ? 1 : 0; current.critical += incident.severity === "Critical" ? 1 : 0; current.high += incident.severity === "High" ? 1 : 0; current.medium += incident.severity === "Medium" ? 1 : 0; current.maxRisk = Math.max(current.maxRisk, incident.score);
+      grouped.set(incident.brand, current);
+    }
+    return [...grouped.entries()].sort((left, right) => right[1].open - left[1].open || right[1].maxRisk - left[1].maxRisk).slice(0, 10);
+  }, [scopedIncidents]);
+
+  const activityTrend = useMemo(() => {
+    const days = timeFilter === "7 days" ? 7 : 14;
+    return Array.from({ length: days }, (_, index) => {
+      const date = new Date(); date.setUTCHours(0, 0, 0, 0); date.setUTCDate(date.getUTCDate() - (days - 1 - index));
+      const key = date.toISOString().slice(0, 10);
+      const rows = scopedIncidents.filter((incident) => { const timestamp = incidentTimestamp(incident.firstSeen); return timestamp > 0 && new Date(timestamp).toISOString().slice(0, 10) === key; });
+      return { key, label: date.toLocaleDateString("en-GB", { day: "2-digit", month: "short" }), total: rows.length, priority: rows.filter((incident) => ["High", "Critical"].includes(incident.severity)).length };
+    });
+  }, [scopedIncidents, timeFilter]);
 
   const visible = useMemo(() => {
-    return incidents.filter((incident) => {
+    const rows = scopedIncidents.filter((incident) => {
       const matchesFilter = filter === "All"
-        || (filter === "Unassigned" ? !incident.assignedTo && !["Closed", "False Positive"].includes(incident.status) : incident.status === filter || incident.severity === filter);
-      const haystack = `${incident.domain} ${incident.brand} ${incident.source}`.toLowerCase();
-      return matchesFilter && haystack.includes(query.toLowerCase());
+        || (filter === "Unassigned" ? !incident.assignedTo && OPEN_STATUSES.has(incident.status) : incident.status === filter || incident.severity === filter);
+      return matchesFilter;
     });
-  }, [filter, query, incidents]);
+    return [...rows].sort((left, right) => sortMode === "Newest" ? incidentTimestamp(right.firstSeen) - incidentTimestamp(left.firstSeen) : sortMode === "Client" ? left.brand.localeCompare(right.brand) || right.score - left.score : right.score - left.score || incidentTimestamp(right.firstSeen) - incidentTimestamp(left.firstSeen));
+  }, [filter, scopedIncidents, sortMode]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -247,15 +303,25 @@ export default function Home() {
     return () => controller.abort();
   }, []);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    const days = timeFilter === "7 days" ? 7 : timeFilter === "30 days" ? 30 : timeFilter === "90 days" ? 90 : 0;
+    fetch(`/api/dashboard?days=${days}`, { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("Dashboard unavailable")))
+      .then((payload: { mode: "demo" | "live"; dashboard: DashboardSummary | null }) => { if (payload.mode === "live") setDashboard(payload.dashboard); })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [timeFilter]);
+
   async function submitDomain() {
     if (!submissionBrandId || submissionValue.trim().length < 3) return;
     setSubmitting(true); setSubmissionFeedback(null);
     try {
-      const response = await fetch("/api/submissions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ brandId: submissionBrandId, value: submissionValue, requestCapture: submissionCapture }) });
+      const response = await fetch("/api/submissions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ brandId: submissionBrandId, value: submissionValue, requestCapture: false }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Analysis could not be queued");
       setIncidents((current) => [body.incident, ...current.filter((item) => item.id !== body.incident.id)]);
-      setSelected(body.incident); setSubmissionValue(""); setSubmissionCapture(false); setShowSubmission(false);
+      setSelected(body.incident); setSubmissionValue(""); setShowSubmission(false);
     } catch (error) { setSubmissionFeedback(error instanceof Error ? error.message : "Analysis could not be queued"); }
     finally { setSubmitting(false); }
   }
@@ -293,11 +359,28 @@ export default function Home() {
 
         <div className="operational-banner"><span className="pulse-dot" /><strong>{worker?.fresh ? "Live discovery worker" : dataMode === "live" ? "API connected — worker unavailable" : "Research-backed demonstration"}</strong><span>{worker?.fresh ? `Healthy · ${worker.cycle_count ?? 0} completed cycles` : dataMode === "live" ? "Incidents remain available while scanner health is investigated" : "Public-source current and historical cases — analyst review required"}</span><span className="banner-rule" /><span>Evidence policy</span><strong>Source linked</strong></div>
 
+        <section className="dashboard-filter-bar" aria-label="Dashboard filters">
+          <div className="filter-bar-heading"><div><span>Portfolio scope</span><strong>Filter the complete dashboard</strong></div><small>{dashboard ? `${dashboard.totals.incidents} database incidents in selected period` : `${scopedIncidents.length} loaded incidents`}</small></div>
+          <label>Client<select value={clientFilter} onChange={(event) => setClientFilter(event.target.value)}><option>All clients</option>{clientNames.map((name) => <option key={name}>{name}</option>)}</select></label>
+          <label>Severity<select value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)}><option>All severities</option>{["Critical", "High", "Medium", "Low", "Informational"].map((value) => <option key={value}>{value}</option>)}</select></label>
+          <label>Ownership<select value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)}><option>All ownership</option><option>Unassigned</option><option>Assigned</option>{me && <option>Assigned to me</option>}</select></label>
+          <label>Observed<select value={timeFilter} onChange={(event) => setTimeFilter(event.target.value)}><option>All time</option><option>7 days</option><option>30 days</option><option>90 days</option></select></label>
+          <label>Minimum risk<select value={minimumRisk} onChange={(event) => setMinimumRisk(Number(event.target.value))}><option value={0}>Any score</option><option value={20}>20+</option><option value={40}>40+</option><option value={60}>60+</option><option value={80}>80+</option></select></label>
+          <label>Order<select value={sortMode} onChange={(event) => setSortMode(event.target.value)}><option>Risk priority</option><option>Newest</option><option>Client</option></select></label>
+          <button className="filter-reset" onClick={() => { setClientFilter("All clients"); setSeverityFilter("All severities"); setOwnerFilter("All ownership"); setTimeFilter("All time"); setMinimumRisk(0); setSortMode("Risk priority"); setFilter("All"); setQuery(""); }}>Reset</button>
+        </section>
+
         <section className="metrics-grid" aria-label="Key risk metrics">
           <article className="metric-card"><div><span>New findings</span><b className="trend alert">Needs triage</b></div><strong>{queueStats.newCount}</strong><p>Unconfirmed detections waiting for first review</p><div className="mini-bars">{[52,64,58,73,67,85,78,92].map((height, index) => <i key={index} style={{height: `${height}%`}} />)}</div></article>
           <article className="metric-card"><div><span>Investigating</span><b className="trend">Active cases</b></div><strong>{queueStats.investigating}</strong><p>Cases currently owned by an analyst</p><div className="risk-ring"><span>{queueStats.investigating}</span></div></article>
           <article className="metric-card"><div><span>Critical open risk</span><b className="trend alert">Priority</b></div><strong>{queueStats.critical}</strong><p>Open findings requiring accelerated review</p><div className="source-stack"><i /><i /><i /><i /></div></article>
           <article className="metric-card"><div><span>Unassigned</span><b className={queueStats.unassigned ? "trend alert" : "trend good"}>{queueStats.brands} brands</b></div><strong>{queueStats.unassigned}</strong><p>Open cases without a current owner</p><div className="sparkline"><i /><i /><i /><i /><i /><i /><i /></div></article>
+        </section>
+
+        <section className="analytics-grid" aria-label="Incident analytics by client">
+          <article className="panel client-risk-panel"><div className="panel-heading"><div><p className="eyebrow">Client-separated exposure</p><h2>Incidents by protected brand</h2></div><span className="queue-count">{clientBreakdown.length} clients in scope</span></div><div className="client-risk-list">{clientBreakdown.map(([brand, values]) => <button key={brand} onClick={() => setClientFilter(brand)} className={clientFilter === brand ? "selected" : ""}><span className="company-mark sage">{brand.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</span><div><div><strong>{brand}</strong><span>{values.open} open · max risk {values.maxRisk}</span></div><div className="client-stack" aria-label={`${values.total} incidents`}><i className="stack-critical" style={{ width: `${values.total ? values.critical / values.total * 100 : 0}%` }} /><i className="stack-high" style={{ width: `${values.total ? values.high / values.total * 100 : 0}%` }} /><i className="stack-medium" style={{ width: `${values.total ? values.medium / values.total * 100 : 0}%` }} /><i className="stack-other" style={{ width: `${values.total ? Math.max(0, values.total - values.critical - values.high - values.medium) / values.total * 100 : 0}%` }} /></div></div><b>{values.total}</b></button>)}{clientBreakdown.length === 0 && <div className="analytics-empty">No client incidents match this scope.</div>}</div></article>
+          <article className="panel severity-panel"><div className="panel-heading"><div><p className="eyebrow">Risk composition</p><h2>Severity distribution</h2></div></div><div className="severity-visual"><div className="severity-donut" style={{ background: severityBreakdown.gradient }}><span><strong>{scopedIncidents.length}</strong>findings</span></div><div>{severityBreakdown.values.map((item) => <button key={item.severity} onClick={() => setSeverityFilter(item.severity)}><i className={`legend-${item.severity.toLowerCase()}`} /><span>{item.severity}</span><strong>{item.count}</strong></button>)}</div></div></article>
+          <article className="panel activity-panel"><div className="panel-heading"><div><p className="eyebrow">Discovery cadence</p><h2>Incident activity</h2></div><span className="queue-count">High and critical highlighted</span></div><div className="activity-chart">{activityTrend.map((day) => { const maximum = Math.max(1, ...activityTrend.map((item) => item.total)); return <div key={day.key} title={`${day.label}: ${day.total} incidents`}><div><i className="activity-priority" style={{ height: `${day.priority / maximum * 100}%` }} /><i style={{ height: `${Math.max(0, day.total - day.priority) / maximum * 100}%` }} /></div><span>{day.label}</span></div>; })}</div></article>
         </section>
 
         <section className="content-grid">
@@ -328,7 +411,7 @@ export default function Home() {
         </section>
       </section>
 
-      {showSubmission && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowSubmission(false)}><form className="modal" role="dialog" aria-modal="true" aria-labelledby="submission-title" onSubmit={(event) => { event.preventDefault(); submitDomain(); }} onMouseDown={(event) => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => setShowSubmission(false)} aria-label="Close">×</button><p className="eyebrow">Manual submission</p><h2 id="submission-title">Analyze a domain or URL</h2><p>{dataMode === "live" ? "Submit an observation to the same evidence and scoring pipeline used by live connectors." : "Connect the operational API to submit live observations. Demonstration cases remain read-only."}</p><label>Domain or URL<input autoFocus value={submissionValue} onChange={(event) => setSubmissionValue(event.target.value)} placeholder="example-login.com" maxLength={2048} disabled={dataMode !== "live"} /></label><label>Protected brand<select value={submissionBrandId} onChange={(event) => setSubmissionBrandId(event.target.value)} disabled={dataMode !== "live" || brands.length === 0}><option value="">Choose a monitored brand…</option>{brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}</select></label><label className="check"><input type="checkbox" checked={submissionCapture} onChange={(event) => setSubmissionCapture(event.target.checked)} disabled={dataMode !== "live"} /> Request isolated page capture</label><button className="primary-button full" disabled={submitting || dataMode !== "live" || !submissionBrandId || submissionValue.trim().length < 3}>{submitting ? "Queueing…" : "Queue analysis"}</button>{submissionFeedback && <p className="modal-error" role="alert">{submissionFeedback}</p>}<small>Live capture never enters credentials or submits forms.</small></form></div>}
+      {showSubmission && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowSubmission(false)}><form className="modal" role="dialog" aria-modal="true" aria-labelledby="submission-title" onSubmit={(event) => { event.preventDefault(); submitDomain(); }} onMouseDown={(event) => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => setShowSubmission(false)} aria-label="Close">×</button><p className="eyebrow">Manual submission</p><h2 id="submission-title">Analyze a domain or URL</h2><p>{dataMode === "live" ? "Submit an observation to the same evidence and scoring pipeline used by live connectors." : "Connect the operational API to submit live observations. Demonstration cases remain read-only."}</p><label>Domain or URL<input autoFocus value={submissionValue} onChange={(event) => setSubmissionValue(event.target.value)} placeholder="example-login.com" maxLength={2048} disabled={dataMode !== "live"} /></label><label>Protected brand<select value={submissionBrandId} onChange={(event) => setSubmissionBrandId(event.target.value)} disabled={dataMode !== "live" || brands.length === 0}><option value="">Choose a monitored brand…</option>{brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}</select></label><button className="primary-button full" disabled={submitting || dataMode !== "live" || !submissionBrandId || submissionValue.trim().length < 3}>{submitting ? "Queueing…" : "Queue analysis"}</button>{submissionFeedback && <p className="modal-error" role="alert">{submissionFeedback}</p>}<small>Screenshots remain manual and opt-in from the case workspace to control local storage.</small></form></div>}
     </main>
   );
 }

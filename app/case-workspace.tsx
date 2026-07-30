@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import type { AnalystAccount, DomainContext, EvidenceItem, Incident, IncidentNote } from "./incident-types";
+import type { AnalystAccount, DomainContext, EvidenceItem, Incident, IncidentNote, RelatedIncident } from "./incident-types";
 
 const STATUS_OPTIONS = ["investigating", "likely_abuse", "confirmed", "false_positive", "monitoring", "closed"];
 const SEVERITY_OPTIONS = ["informational", "low", "medium", "high", "critical"];
@@ -42,6 +42,7 @@ export function CaseWorkspace({ incidentId }: { incidentId: string }) {
   const [me, setMe] = useState<AnalystAccount | null>(null);
   const [analysts, setAnalysts] = useState<AnalystAccount[]>([]);
   const [notes, setNotes] = useState<IncidentNote[]>([]);
+  const [related, setRelated] = useState<RelatedIncident[]>([]);
   const [selectedAnalyst, setSelectedAnalyst] = useState("");
   const [noteBody, setNoteBody] = useState("");
   const [status, setStatus] = useState("investigating");
@@ -69,7 +70,8 @@ export function CaseWorkspace({ incidentId }: { incidentId: string }) {
       fetch(`/api/incidents/${encodeURIComponent(incidentId)}/context`, { signal: controller.signal }).then((r) => r.json()),
       fetch("/api/accounts", { signal: controller.signal }).then((r) => r.json()),
       fetch(`/api/incidents/${encodeURIComponent(incidentId)}/notes`, { signal: controller.signal }).then((r) => r.json()),
-    ]).then(([incidentBody, evidenceBody, contextBody, accountBody, notesBody]) => {
+      fetch(`/api/incidents/${encodeURIComponent(incidentId)}/related`, { signal: controller.signal }).then((r) => r.json()),
+    ]).then(([incidentBody, evidenceBody, contextBody, accountBody, notesBody, relatedBody]) => {
       if (!incidentBody.incident) throw new Error(incidentBody.error ?? "Incident unavailable");
       setIncident(incidentBody.incident);
       setStatus(incidentBody.incident.status.toLowerCase().replaceAll(" ", "_") === "new" ? "investigating" : incidentBody.incident.status.toLowerCase().replaceAll(" ", "_"));
@@ -85,6 +87,7 @@ export function CaseWorkspace({ incidentId }: { incidentId: string }) {
       setAnalysts(accountBody.analysts ?? []);
       setSelectedAnalyst(accountBody.me?.id ?? "");
       setNotes(notesBody.notes ?? []);
+      setRelated(relatedBody.related ?? []);
     }).catch((error) => { if (error.name !== "AbortError") { setFeedbackKind("error"); setFeedback(error.message); } }).finally(() => setLoading(false));
     return () => controller.abort();
   }, [incidentId]);
@@ -207,9 +210,11 @@ export function CaseWorkspace({ incidentId }: { incidentId: string }) {
       <div className="case-main">
         <article className="case-card case-summary" id="assessment"><div className="case-card-head"><div><span>Case assessment</span><h2>Why this needs review</h2></div><span className="case-evidence-count">{evidence.length} evidence items</span></div><p>{incident.summary}</p><ul>{incident.signals.map((signal) => <li key={signal}><span>+</span>{signal}</li>)}</ul></article>
 
-        <article className="case-card capture-card" id="capture"><div className="case-card-head"><div><span>Isolated browser</span><h2>Website capture</h2></div><button className="secondary-button" disabled={busy} onClick={requestCapture}>Request capture</button></div>{screenshotUrl ? <a href={screenshotUrl} target="_blank" rel="noreferrer"><Image unoptimized width={1200} height={720} src={screenshotUrl} alt={`Isolated capture of ${incident.domain}`} /></a> : <div className="capture-empty"><span>▧</span><strong>No screenshot collected</strong><p>Capture is disabled by default. When enabled, the worker records a screenshot without submitting forms or credentials.</p></div>}</article>
+        <article className="case-card capture-card" id="capture"><div className="case-card-head"><div><span>Manual, storage-conscious collection</span><h2>On-demand website capture</h2></div><button className="secondary-button" disabled={busy} onClick={requestCapture}>Request one capture</button></div>{screenshotUrl ? <a href={screenshotUrl} target="_blank" rel="noreferrer"><Image unoptimized width={1200} height={720} src={screenshotUrl} alt={`Isolated capture of ${incident.domain}`} /></a> : <div className="capture-empty"><span>▧</span><strong>No screenshot stored</strong><p>MAegis does not capture every finding. Administrators can enable isolated, case-by-case capture when visual evidence justifies local storage use.</p></div>}</article>
 
-        <article className="case-card" id="evidence"><div className="case-card-head"><div><span>Collected facts</span><h2>Evidence timeline</h2></div></div>{evidence.length === 0 ? <div className="case-empty"><strong>No evidence collected yet</strong><p>The incident was scored from its discovery signal. Wait for enrichment or request a safe capture before making a final decision.</p></div> : <ol className="case-timeline">{evidence.map((item) => { const sourceUrl = safeUrl(item.payload.scan_url ?? item.payload.url); return <li key={item.id}><i /><div><div><strong>{item.evidenceType}</strong><time>{new Date(item.collectedAt).toLocaleString("en-GB")}</time></div><p>{evidenceSummary(item)}</p><span>{item.source} · sha256 {item.rawHash.slice(0, 12)} {sourceUrl && <a href={sourceUrl} target="_blank" rel="noreferrer">Open source ↗</a>}</span></div></li>; })}</ol>}</article>
+        <article className="case-card" id="evidence"><div className="case-card-head"><div><span>Collected facts</span><h2>Evidence timeline</h2></div>{me?.role !== "viewer" && <a className="secondary-button export-button" href={`/api/incidents/${encodeURIComponent(incidentId)}/export`} download>Export evidence</a>}</div>{evidence.length === 0 ? <div className="case-empty"><strong>No evidence collected yet</strong><p>The incident was scored from its discovery signal. Wait for enrichment or request a safe capture before making a final decision.</p></div> : <ol className="case-timeline">{evidence.map((item) => { const sourceUrl = safeUrl(item.payload.scan_url ?? item.payload.url); return <li key={item.id}><i /><div><div><strong>{item.evidenceType}</strong><time>{new Date(item.collectedAt).toLocaleString("en-GB")}</time></div><p>{evidenceSummary(item)}</p><span>{item.source} · sha256 {item.rawHash.slice(0, 12)} {sourceUrl && <a href={sourceUrl} target="_blank" rel="noreferrer">Open source ↗</a>}</span></div></li>; })}</ol>}</article>
+
+        <article className="case-card related-card"><div className="case-card-head"><div><span>Infrastructure correlation</span><h2>Related cases</h2></div><span className="case-evidence-count">{related.length} linked</span></div>{related.length === 0 ? <div className="case-empty"><strong>No shared infrastructure detected</strong><p>MAegis compares IPs, nameservers, mail servers, certificates, ASNs, and favicon hashes across tenant cases.</p></div> : <div className="related-list">{related.map((item) => <Link key={item.id} href={`/incidents/${encodeURIComponent(item.id)}`} target="_blank"><div><strong>{item.domain}</strong><span>{item.brand} · {item.severity} · risk {item.risk_score}</span></div><ul>{item.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul><b>↗</b></Link>)}</div>}</article>
       </div>
 
       <aside className="case-side">

@@ -32,6 +32,11 @@ class IncidentPolicyTests(unittest.TestCase):
         self.assertEqual([signal.name for signal in signals], ["threat_feed_verdict"])
         self.assertEqual(source_signals({"verdicts": {"overall": {"malicious": False}}}), [])
 
+    def test_urlhaus_listing_is_an_explicit_threat_feed_signal(self):
+        signals = source_signals({"query_status": "ok", "urls": [{"url": "https://example.test/payload"}]})
+        self.assertEqual([signal.name for signal in signals], ["threat_feed_verdict"])
+        self.assertIn("URLhaus", signals[0].explanation)
+
     def test_fresh_registration_qualifies_ambiguous_brand(self):
         signals = [
             Signal("brand_token", 1, 22, "brand token"),

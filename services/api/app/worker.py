@@ -3,20 +3,22 @@ import hashlib
 import json
 import os
 import socket
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
 from .brand_schedule import select_brand_batch_at_cursor
 from .candidate_schedule import brand_checkpoint, fetch_candidate_batch, prioritized_rotating_batch, with_brand_checkpoint
-from .connectors import CZDSZoneConnector, CertificateTransparencyConnector, DNSCandidateConnector, RDAPRegistrationConnector, URLScanConnector, fetch_rdap
+from .connectors import CZDSZoneConnector, CertificateTransparencyConnector, DNSCandidateConnector, RDAPRegistrationConnector, URLhausConnector, URLScanConnector, fetch_rdap
 from .config import get_settings
 from .database import Base, SessionLocal, engine
 from .detection import DETECTOR_VERSION, GeneratedCandidate, Signal, analyze_domain, generate_candidate_variants, is_official_domain, normalize_domain
 from .enrichment import enrichment_signals, fetch_dns, fetch_tls
 from .incident_policy import should_create_incident, source_signals
-from .models import BackgroundJob, Candidate, EvidenceItem, Incident, Observation, ProtectedBrand, ScoreContribution, Severity, SourceConnector, WorkerHeartbeat
+from .job_retry import retry_delay_seconds
+from .models import BackgroundJob, Candidate, EvidenceItem, Incident, IncidentStatus, Observation, ProtectedBrand, ScoreContribution, Severity, SourceConnector, WorkerHeartbeat
 from .scoring import score_signals
+from .suppression import AUTO_ALLOWLIST_RATIONALE
 
 
 WORKER_NAME = "discovery"
@@ -272,13 +274,59 @@ async def process_jobs() -> None:
         try:
             if job.job_type == "enrich_domain":
                 await enrich_incident(db, job)
+            elif job.job_type == "rescore_brand":
+                rescore_brand_incidents(db, job)
+            else:
+                raise ValueError(f"Unsupported background job type: {job.job_type}")
             job.status = "complete"
             db.commit()
-        except Exception:
+        except Exception as exc:
             db.rollback()
             job = db.get(BackgroundJob, job.id)
             job.status = "failed" if job.attempts >= 3 else "queued"
+            job.run_after = datetime.now(timezone.utc) + timedelta(seconds=retry_delay_seconds(job.attempts))
+            job.payload = {**job.payload, "last_error": f"{type(exc).__name__}: {exc}"[:1000], "last_failed_at": datetime.now(timezone.utc).isoformat()}
             db.commit()
+
+
+def rescore_brand_incidents(db, job: BackgroundJob) -> None:
+    brand = db.scalar(select(ProtectedBrand).where(ProtectedBrand.id == job.payload.get("brand_id"), ProtectedBrand.tenant_id == job.tenant_id))
+    if not brand:
+        raise ValueError("Protected brand is outside the job tenant")
+    incidents = list(db.scalars(select(Incident).where(Incident.brand_id == brand.id, Incident.tenant_id == job.tenant_id)))
+    for incident in incidents:
+        base_signals = analyze_domain(incident.domain, incident.domain, brand.name, brand.official_domains)
+        base_names = {signal.name for signal in base_signals}
+        retained = [
+            Signal(item.signal, item.value, item.weight, item.explanation)
+            for item in incident.contributions
+            if (item.signal.startswith("enrichment.") or item.signal in PERSISTENT_SOURCE_SIGNALS) and item.signal not in base_names
+        ]
+        result = score_signals(base_signals + retained, evidence_sources=2 if retained else 1)
+        for contribution in list(incident.contributions):
+            db.delete(contribution)
+        for signal in result.contributions:
+            db.add(ScoreContribution(incident_id=incident.id, signal=signal.name, weight=signal.weight, value=signal.value, explanation=signal.explanation))
+        allowlisted = is_official_domain(incident.domain, brand.official_domains)
+        candidate = db.get(Candidate, incident.candidate_id)
+        if allowlisted:
+            if incident.status in {IncidentStatus.NEW, IncidentStatus.MONITORING} or incident.decision_rationale == AUTO_ALLOWLIST_RATIONALE:
+                incident.status = IncidentStatus.FALSE_POSITIVE
+                incident.decision_rationale = AUTO_ALLOWLIST_RATIONALE
+            if candidate and candidate.tenant_id == job.tenant_id:
+                candidate.status = "suppressed"
+        else:
+            if incident.status == IncidentStatus.FALSE_POSITIVE and incident.decision_rationale == AUTO_ALLOWLIST_RATIONALE:
+                incident.status = IncidentStatus.NEW
+                incident.decision_rationale = None
+            if candidate and candidate.tenant_id == job.tenant_id:
+                candidate.status = "active"
+        incident.risk_score = result.score
+        incident.confidence = result.confidence
+        incident.severity = Severity(result.severity)
+        incident.summary = "; ".join(item.explanation for item in result.contributions)
+        incident.detector_version = DETECTOR_VERSION
+        incident.updated_at = datetime.now(timezone.utc)
 
 
 def add_evidence(db, job: BackgroundJob, evidence_type: str, source: str, payload: dict) -> None:
@@ -306,6 +354,7 @@ def add_evidence(db, job: BackgroundJob, evidence_type: str, source: str, payloa
 async def enrich_incident(db, job: BackgroundJob) -> None:
     domain = job.payload["domain"]
     payloads: dict[str, dict | None] = {"dns": None, "rdap": None, "tls": None}
+    threat_feed_signals: list[Signal] = []
     try:
         payloads["dns"] = await fetch_dns(domain)
         add_evidence(db, job, "dns", "dns", payloads["dns"])
@@ -323,6 +372,13 @@ async def enrich_incident(db, job: BackgroundJob) -> None:
             add_evidence(db, job, "tls_certificate", "tls", payloads["tls"])
         except Exception as exc:
             add_evidence(db, job, "enrichment_error", "tls", {"status": "error", "error_type": type(exc).__name__})
+    try:
+        observations, _ = await URLhausConnector().fetch(domain, {})
+        for observation in observations:
+            add_evidence(db, job, "threat_feed", observation.source, observation.payload)
+            threat_feed_signals.extend(source_signals(observation.payload))
+    except Exception as exc:
+        add_evidence(db, job, "enrichment_error", "urlhaus", {"status": "error", "error_type": type(exc).__name__})
 
     incident = db.get(Incident, job.payload["incident_id"])
     if not incident or incident.tenant_id != job.tenant_id:
@@ -330,13 +386,14 @@ async def enrich_incident(db, job: BackgroundJob) -> None:
     brand = db.get(ProtectedBrand, incident.brand_id)
     base_signals = analyze_domain(incident.domain, incident.domain, brand.name, brand.official_domains)
     base_signal_names = {signal.name for signal in base_signals}
+    current_threat_names = {signal.name for signal in threat_feed_signals}
     retained_source = [
         Signal(contribution.signal, contribution.value, contribution.weight, contribution.explanation)
         for contribution in incident.contributions
-        if contribution.signal in PERSISTENT_SOURCE_SIGNALS and contribution.signal not in base_signal_names
+        if contribution.signal in PERSISTENT_SOURCE_SIGNALS and contribution.signal not in base_signal_names and contribution.signal not in current_threat_names
     ]
-    signals = base_signals + retained_source + enrichment_signals(payloads["dns"], payloads["rdap"], payloads["tls"])
-    result = score_signals(signals, evidence_sources=1 + len([payload for payload in payloads.values() if payload]))
+    signals = base_signals + retained_source + threat_feed_signals + enrichment_signals(payloads["dns"], payloads["rdap"], payloads["tls"])
+    result = score_signals(signals, evidence_sources=1 + len([payload for payload in payloads.values() if payload]) + int(bool(threat_feed_signals)))
     for contribution in list(incident.contributions):
         db.delete(contribution)
     for signal in result.contributions:

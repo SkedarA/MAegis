@@ -37,6 +37,8 @@ def source_signals(payload: dict) -> list[Signal]:
     overall = verdicts.get("overall") if isinstance(verdicts, dict) else None
     if isinstance(overall, dict) and overall.get("malicious") is True:
         signals.append(Signal("threat_feed_verdict", 1, 35, "Public urlscan metadata marked the observed page malicious"))
+    if payload.get("query_status") == "ok" and isinstance(payload.get("urls"), list) and payload["urls"]:
+        signals.append(Signal("threat_feed_verdict", 1, 40, "URLhaus lists the domain in its community malware URL feed"))
     generation = payload.get("candidate_generation")
     if isinstance(generation, dict) and generation.get("mutation"):
         mutation = str(generation["mutation"]).replace("_", " ")

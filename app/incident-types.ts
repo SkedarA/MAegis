@@ -3,6 +3,7 @@ export type IncidentStatus = "New" | "Investigating" | "Likely Abuse" | "Confirm
 
 export type Incident = {
   id: string;
+  brandId?: string;
   domain: string;
   brand: string;
   source: string;
@@ -16,6 +17,16 @@ export type Incident = {
   signals: string[];
   summary: string;
   references?: Array<{ label: string; url: string }>;
+};
+
+export type DashboardSummary = {
+  window_days: number;
+  generated_at: string;
+  totals: { incidents: number; open: number; critical: number; unassigned: number; average_risk: number; clients: number };
+  by_brand: Array<{ brand_id: string; name: string; monitoring_enabled: boolean; total: number; open: number; critical: number; high: number; unassigned: number; max_risk: number; average_risk: number }>;
+  by_severity: Record<string, number>;
+  by_status: Record<string, number>;
+  timeline: Array<{ date: string; total: number; high_critical: number }>;
 };
 
 export type EvidenceItem = {
@@ -43,6 +54,17 @@ export type IncidentNote = {
   author_name: string;
   body: string;
   created_at: string;
+};
+
+export type RelatedIncident = {
+  id: string;
+  domain: string;
+  brand: string;
+  risk_score: number;
+  severity: string;
+  status: string;
+  shared_indicators: string[];
+  reasons: string[];
 };
 
 export type DomainContext = {

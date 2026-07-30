@@ -10,8 +10,10 @@ from sqlalchemy.orm import Session, selectinload
 from .brand_catalog import get_catalog
 from .brand_enrollment import enroll_catalog
 from .config import get_settings
+from .correlation import correlation_reason, evidence_correlation_keys
 from .database import Base, engine, get_db
-from .detection import DETECTOR_VERSION, analyze_domain, canonical_brand, normalize_domain
+from .dashboard import build_dashboard_summary
+from .detection import DETECTOR_VERSION, analyze_domain, canonical_brand, is_official_domain, normalize_domain
 from .domain_context import build_domain_context
 from .models import AnalystAccount, AuditEvent, BackgroundJob, Candidate, DomainContextOverride, EvidenceItem, Incident, IncidentNote, IncidentStatus, Observation, OfficialAsset, ProtectedBrand, ProtectedBrandArchive, ScoreContribution, Severity, SourceConnector, WorkerHeartbeat
 from .official_assets import normalize_official_asset
@@ -19,6 +21,7 @@ from .runtime_health import worker_is_fresh
 from .schemas import AIAnalysisView, AnalystCreate, AnalystUpdate, AnalystView, AssignmentUpdate, AuditEventView, BrandArchiveCreate, BrandCreate, BrandUpdate, BrandView, CatalogBrandView, CatalogEnrollmentCreate, CatalogEnrollmentView, ConnectorUpdate, DomainContextOverrideUpdate, EvidenceView, IncidentNoteCreate, IncidentNoteView, IncidentView, OfficialAssetCreate, OfficialAssetView, SubmissionCreate, TriageUpdate
 from .scoring import score_signals
 from .security import Principal, require_administrator, require_analyst, require_principal
+from .suppression import AUTO_ALLOWLIST_RATIONALE
 
 
 @asynccontextmanager
@@ -222,6 +225,29 @@ def sync_brand_allowlist(db: Session, brand: ProtectedBrand) -> None:
     brand.official_domains = list(db.scalars(select(OfficialAsset.value).where(OfficialAsset.brand_id == brand.id, OfficialAsset.tenant_id == brand.tenant_id).order_by(OfficialAsset.value)))
 
 
+def suppress_allowlisted_incidents(db: Session, brand: ProtectedBrand) -> tuple[int, int]:
+    suppressed = 0
+    needs_review = 0
+    incidents = db.scalars(select(Incident).where(Incident.brand_id == brand.id, Incident.tenant_id == brand.tenant_id)).all()
+    for incident in incidents:
+        if not is_official_domain(incident.domain, brand.official_domains):
+            continue
+        if incident.status in {IncidentStatus.NEW, IncidentStatus.MONITORING}:
+            incident.status = IncidentStatus.FALSE_POSITIVE
+            incident.severity = Severity.INFORMATIONAL
+            incident.risk_score = 0
+            incident.confidence = 1
+            incident.decision_rationale = AUTO_ALLOWLIST_RATIONALE
+            incident.updated_at = datetime.now(timezone.utc)
+            candidate = db.get(Candidate, incident.candidate_id)
+            if candidate and candidate.tenant_id == brand.tenant_id:
+                candidate.status = "suppressed"
+            suppressed += 1
+        elif incident.status not in {IncidentStatus.FALSE_POSITIVE, IncidentStatus.CLOSED}:
+            needs_review += 1
+    return suppressed, needs_review
+
+
 @app.get("/api/v1/brands/{brand_id}/assets", response_model=list[OfficialAssetView])
 def list_official_assets(brand_id: str, db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> list[OfficialAsset]:
     brand = db.scalar(select(ProtectedBrand).where(ProtectedBrand.id == brand_id, ProtectedBrand.tenant_id == principal.tenant_id))
@@ -250,7 +276,9 @@ def create_official_asset(brand_id: str, payload: OfficialAssetCreate, db: Sessi
     db.add(asset)
     db.flush()
     sync_brand_allowlist(db, brand)
-    audit(db, principal, "official_asset.created", "protected_brand", brand.id, {"asset_id": asset.id, "asset_type": asset.asset_type, "value": asset.value})
+    suppressed, needs_review = suppress_allowlisted_incidents(db, brand)
+    db.add(BackgroundJob(tenant_id=principal.tenant_id, job_type="rescore_brand", payload={"brand_id": brand.id, "reason": "official_asset_added"}))
+    audit(db, principal, "official_asset.created", "protected_brand", brand.id, {"asset_id": asset.id, "asset_type": asset.asset_type, "value": asset.value, "incidents_suppressed": suppressed, "incidents_requiring_review": needs_review})
     db.commit()
     return asset
 
@@ -269,6 +297,7 @@ def delete_official_asset(brand_id: str, asset_id: str, db: Session = Depends(ge
     db.delete(asset)
     db.flush()
     sync_brand_allowlist(db, brand)
+    db.add(BackgroundJob(tenant_id=principal.tenant_id, job_type="rescore_brand", payload={"brand_id": brand.id, "reason": "official_asset_removed"}))
     audit(db, principal, "official_asset.deleted", "protected_brand", brand.id, before)
     db.commit()
 
@@ -408,6 +437,74 @@ def list_incident_evidence(
     incident_exists = db.scalar(
         select(Incident.id).where(Incident.id == incident_id, Incident.tenant_id == principal.tenant_id)
     )
+
+
+@app.get("/api/v1/incidents/{incident_id}/related")
+def related_incidents(incident_id: str, db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> list[dict]:
+    incident = db.scalar(select(Incident).where(Incident.id == incident_id, Incident.tenant_id == principal.tenant_id))
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    target_evidence = list(db.scalars(select(EvidenceItem).where(EvidenceItem.incident_id == incident.id, EvidenceItem.tenant_id == principal.tenant_id)))
+    target_keys = evidence_correlation_keys([{"evidence_type": item.evidence_type, "payload": item.payload} for item in target_evidence])
+    if not target_keys:
+        return []
+    candidates = list(db.scalars(select(Incident).where(Incident.tenant_id == principal.tenant_id, Incident.id != incident.id).order_by(Incident.updated_at.desc()).limit(500)))
+    candidate_ids = [item.id for item in candidates]
+    evidence_by_incident: dict[str, list[dict]] = {item.id: [] for item in candidates}
+    if candidate_ids:
+        for item in db.scalars(select(EvidenceItem).where(EvidenceItem.tenant_id == principal.tenant_id, EvidenceItem.incident_id.in_(candidate_ids))):
+            evidence_by_incident[item.incident_id].append({"evidence_type": item.evidence_type, "payload": item.payload})
+    related = []
+    for item in candidates:
+        shared = sorted(target_keys & evidence_correlation_keys(evidence_by_incident[item.id]))
+        if not shared:
+            continue
+        related.append({
+            "id": item.id,
+            "domain": item.domain,
+            "brand_id": item.brand_id,
+            "risk_score": round(item.risk_score),
+            "severity": item.severity.value,
+            "status": item.status.value,
+            "shared_indicators": shared,
+            "reasons": [correlation_reason(key) for key in shared[:4]],
+        })
+    return sorted(related, key=lambda item: (len(item["shared_indicators"]), item["risk_score"]), reverse=True)[:20]
+
+
+@app.get("/api/v1/incidents/{incident_id}/evidence-bundle")
+def incident_evidence_bundle(incident_id: str, db: Session = Depends(get_db), principal: Principal = Depends(require_principal)) -> dict:
+    require_analyst(principal)
+    incident = db.scalar(select(Incident).options(selectinload(Incident.contributions)).where(Incident.id == incident_id, Incident.tenant_id == principal.tenant_id))
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    brand = db.scalar(select(ProtectedBrand).where(ProtectedBrand.id == incident.brand_id, ProtectedBrand.tenant_id == principal.tenant_id))
+    evidence = list(db.scalars(select(EvidenceItem).where(EvidenceItem.incident_id == incident.id, EvidenceItem.tenant_id == principal.tenant_id).order_by(EvidenceItem.collected_at, EvidenceItem.id)))
+    notes = list(db.scalars(select(IncidentNote).where(IncidentNote.incident_id == incident.id, IncidentNote.tenant_id == principal.tenant_id).order_by(IncidentNote.created_at, IncidentNote.id)))
+    audit_events = list(db.scalars(select(AuditEvent).where(AuditEvent.tenant_id == principal.tenant_id, AuditEvent.resource_id == incident.id).order_by(AuditEvent.created_at, AuditEvent.id)))
+    generated_at = datetime.now(timezone.utc)
+    bundle = {
+        "format": "maegis-evidence-bundle",
+        "version": "1.0",
+        "generated_at": generated_at,
+        "generated_by": principal.email,
+        "case": {
+            "id": incident.id, "brand": brand.name if brand else incident.brand_id, "domain": incident.domain,
+            "status": incident.status.value, "severity": incident.severity.value, "risk_score": incident.risk_score,
+            "confidence": incident.confidence, "summary": incident.summary, "decision_rationale": incident.decision_rationale,
+            "detector_version": incident.detector_version, "created_at": incident.created_at, "updated_at": incident.updated_at,
+        },
+        "score_contributions": [{"signal": item.signal, "weight": item.weight, "value": item.value, "explanation": item.explanation} for item in incident.contributions],
+        "domain_context": build_incident_domain_context(db, incident, principal.tenant_id),
+        "evidence": [{"id": item.id, "type": item.evidence_type, "source": item.source, "payload": item.payload, "sha256": item.raw_hash, "collected_at": item.collected_at} for item in evidence],
+        "analyst_notes": [{"author": item.author_name, "email": item.author_email, "body": item.body, "created_at": item.created_at} for item in notes],
+        "audit_timeline": [{"actor": item.actor, "action": item.action, "payload": item.payload, "created_at": item.created_at} for item in audit_events],
+        "integrity_manifest": {"algorithm": "sha256", "evidence_hashes": [item.raw_hash for item in evidence]},
+        "limitations": ["This bundle contains collected public-source evidence and analyst decisions.", "It does not independently prove malicious ownership or intent.", "No takedown action is submitted automatically."],
+    }
+    audit(db, principal, "incident.evidence_exported", "incident", incident.id, {"evidence_items": len(evidence), "format": "json"})
+    db.commit()
+    return bundle
     if not incident_exists:
         raise HTTPException(status_code=404, detail="Incident not found")
     return list(
@@ -627,6 +724,30 @@ def operations_summary(db: Session = Depends(get_db), principal: Principal = Dep
         "jobs": {status_name: count for status_name, count in job_rows},
         "worker": worker_runtime(db),
     }
+
+
+@app.get("/api/v1/dashboard")
+def dashboard_summary(
+    days: int = Query(default=30, ge=0, le=3650),
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require_principal),
+) -> dict:
+    brands = [
+        {"id": row.id, "name": row.name, "monitoring_enabled": row.monitoring_enabled}
+        for row in db.scalars(select(ProtectedBrand).where(ProtectedBrand.tenant_id == principal.tenant_id).order_by(ProtectedBrand.name))
+    ]
+    rows = [
+        {
+            "brand_id": row.brand_id,
+            "severity": row.severity,
+            "status": row.status,
+            "risk_score": row.risk_score,
+            "assigned_to": row.assigned_to,
+            "created_at": row.created_at,
+        }
+        for row in db.scalars(select(Incident).where(Incident.tenant_id == principal.tenant_id))
+    ]
+    return build_dashboard_summary(rows, brands, days=days)
 
 
 @app.get("/api/v1/settings")

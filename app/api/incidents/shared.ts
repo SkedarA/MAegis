@@ -61,6 +61,7 @@ function ageFrom(value: string) {
 export function toConsoleIncident(row: ApiIncident, brands: Map<string, string>): Incident {
   return {
     id: row.id,
+    brandId: row.brand_id,
     domain: row.domain,
     brand: brands.get(row.brand_id) ?? `Brand ${row.brand_id.slice(0, 8)}`,
     source: "MAegis API",
@@ -69,7 +70,7 @@ export function toConsoleIncident(row: ApiIncident, brands: Map<string, string>)
     severity: titleCase(row.severity) as Incident["severity"],
     status: titleCase(row.status) as Incident["status"],
     age: ageFrom(row.created_at),
-    firstSeen: new Date(row.created_at).toLocaleString("en-GB", { timeZone: "UTC" }) + " UTC",
+    firstSeen: row.created_at,
     assignedTo: row.assigned_to,
     signals: (row.contributions ?? []).map((item) => item.explanation),
     summary: row.summary,
