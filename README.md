@@ -1,14 +1,16 @@
 # MAegis
 
-MAegis is an operational brand-abuse monitoring SaaS that discovers suspicious domains, produces reproducible evidence and risk scores, and gives analysts a structured triage queue. It is designed as a master's thesis and public engineering portfolio without pretending that a solo deployment has commercial passive-DNS coverage.
+MAegis is my personal cybersecurity engineering project for monitoring brand impersonation and phishing infrastructure. It collects public domain and certificate signals, enriches suspicious findings, correlates related infrastructure, and gives analysts a practical case-review workflow.
+
+I built MAegis to develop and demonstrate hands-on experience in detection engineering, threat-intelligence pipelines, backend and API design, secure browser automation, data modelling, and operational interface development. It is a working defensive monitoring system with deliberately bounded coverage and cost, not a commercial threat-intelligence service.
 
 The separately bounded **Campaign Intelligence** module normalizes public DNS, TLS, URL behavior, compact page-structure fingerprints and registration-batch evidence into a global infrastructure graph. Its deterministic v2 clustering requires at least two independent evidence families, weights rare indicators more heavily, decays stale relationships and suppresses generic shared-provider hubs. It can abstract protected-brand names from lure-domain templates to recognize one kit targeting multiple firms. The analyst console exposes cohesion and evidence-family scores, while a dedicated investigation workspace supports tenant-scoped assignment, rationale, monitoring, dismissal and safe promotion into the incident queue. Screenshots remain opt-in; compact structure and form fingerprints provide correlation without bulk image retention.
 
 ![MAegis social preview](public/og.png)
 
-## Current milestone
+## Implemented capabilities
 
-The repository implements the first production-shaped vertical slice:
+The current version includes:
 
 - multi-tenant protected-brand onboarding with legitimate-interest confirmation;
 - targeted Certificate Transparency and passive urlscan metadata search, durably rotating DNS and RDAP candidate sweeps, URLhaus adapter, and streaming CZDS zone-file adapter;
@@ -139,4 +141,4 @@ CI additionally validates linting and container definitions.
 
 ## Roadmap
 
-The next implementation increments are deeper DNS history, analyst-assisted campaign merge/split controls, OIDC enforcement, grounded analyst-assistance experiments, threshold-calibration reports and signed evidence exports. Commercial passive DNS, Kafka, Kubernetes, automated takedown and bulk screenshot retention are deliberately outside the initial milestone.
+The next implementation increments are deeper DNS history, analyst-assisted campaign merge/split controls, OIDC enforcement, threshold-calibration reports, and signed evidence exports. Commercial passive DNS, Kafka, Kubernetes, automated takedown, and bulk screenshot retention are deliberately outside the current scope.

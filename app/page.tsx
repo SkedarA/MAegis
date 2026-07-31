@@ -364,7 +364,7 @@ export default function Home() {
           </div>
         </header>
 
-        <div className="operational-banner"><span className="pulse-dot" /><strong>{worker?.fresh ? "Live discovery worker" : dataMode === "live" ? "API connected — worker unavailable" : "Research-backed demonstration"}</strong><span>{worker?.fresh ? `Healthy · ${worker.cycle_count ?? 0} completed cycles` : dataMode === "live" ? "Incidents remain available while scanner health is investigated" : "Public-source current and historical cases — analyst review required"}</span><span className="banner-rule" /><span>Evidence policy</span><strong>Source linked</strong></div>
+        <div className="operational-banner"><span className="pulse-dot" /><strong>{worker?.fresh ? "Live discovery worker" : dataMode === "live" ? "API connected — worker unavailable" : "Public-data demonstration"}</strong><span>{worker?.fresh ? `Healthy · ${worker.cycle_count ?? 0} completed cycles` : dataMode === "live" ? "Incidents remain available while scanner health is investigated" : "Public-source current and historical cases — analyst review required"}</span><span className="banner-rule" /><span>Evidence policy</span><strong>Source linked</strong></div>
 
         <section className="dashboard-filter-bar" aria-label="Dashboard filters">
           <div className="filter-bar-heading"><div><span>Portfolio scope</span><strong>Filter the complete dashboard</strong></div><small>{dashboard ? `${dashboard.totals.incidents} database incidents in selected period` : `${scopedIncidents.length} loaded incidents`}</small></div>
